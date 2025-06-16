@@ -1,0 +1,7 @@
+earthengine-api
+rasterio
+geopandas
+rioxarray
+contextily
+matplotlib
+xarray
