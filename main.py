@@ -1,22 +1,29 @@
 from datetime import datetime
 import os
 import sys
+from dotenv import load_dotenv
+
+
 
 from src.grid_utils import create_grid
 from src.download_utils import download_dynamic_world, authenticate_gee
 from src.zonal_utils import get_class_percentages_per_grid, compare_class_percentages
 from src.map_utils import plot_landcover_comparison
 
+# Load environment variables from .env file
+load_dotenv('dot_env_content.txt')
 
 import geopandas as gpd
 
 # Parámetros
-MAIN_PATH = "/Users/javierguerra/Library/CloudStorage/OneDrive-SharedLibraries-VestigiumMétodosMixtosAplicadosSAS/MMC - General - SDP - Monitoreo de Bosques/monitoreo_bosques/datos/" ## ESTO NO DEBERÍA CAMBIAR
-AOI_PATH = MAIN_PATH + "[TEST] dynamic_world/input/paramo_altiplano.geojson" ## CAMBIAR AQUI POR LA RUTA DEL AOI
+
+ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
+MAIN_PATH = os.path.join(ONEDRIVE_PATH, "datos")
+AOI_PATH = os.path.join(MAIN_PATH, "[TEST] dynamic_world/input/paramo_altiplano.geojson") ## CAMBIAR AQUI POR LA RUTA DEL AOI
 Q1 = "Q12024"
 Q2 = "Q22024"
 GRID_SIZE = 100
-OUTPUT_DIR = MAIN_PATH + "/[TEST] dynamic_world/output"
+OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world/output")
 GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
 IMG_DIR = os.path.join(OUTPUT_DIR, "images")
 CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
