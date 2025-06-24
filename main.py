@@ -3,8 +3,6 @@ import os
 import sys
 from dotenv import load_dotenv
 
-
-
 from src.grid_utils import create_grid
 from src.download_utils import download_dynamic_world, authenticate_gee
 from src.zonal_utils import get_class_percentages_per_grid, compare_class_percentages
@@ -27,7 +25,6 @@ OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world/output")
 GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
 IMG_DIR = os.path.join(OUTPUT_DIR, "images")
 CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
-
 
 
 def get_quarter_dates(qcode):
@@ -101,7 +98,7 @@ def main():
 
     # Comparar
     df_comp = compare_class_percentages(df1, df2, Q1, Q2)
-    out_csv = os.path.join(CSV_DIR, f"comparison_{Q1}_{Q2}.csv")
+    out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{Q1}_{Q2}.csv")
     df_comp.to_csv(out_csv, index=False)
     print(f"✅ Comparación guardada en: {out_csv}")
 
@@ -111,7 +108,7 @@ def main():
         q1=Q1,
         q2=Q2,
         grid_path=grid_path,
-        output_path=os.path.join(OUTPUT_DIR, "maps", f"comparison_{Q1}_{Q2}.png")
+        output_path=os.path.join(OUTPUT_DIR, "maps", f"{aoi_base}_{Q1}_{Q2}.png")
     )
 
 

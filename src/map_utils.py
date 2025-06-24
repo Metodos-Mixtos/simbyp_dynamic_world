@@ -1,5 +1,6 @@
 import os
 import rasterio
+import contextily as ctx
 from rasterio.mask import mask
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -16,21 +17,22 @@ def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_pa
         "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
     ]
     class_labels = [
-        "Water", "Trees", "Grass", "Flooded vegetation", "Crops",
-        "Shrub & scrub", "Built", "Bare ground", "Snow & ice"
+        "Agua", "Árboles", "Pastizales", "Vegetación inundada", "Cultivos",
+        "Arbustos y matorrales", "Área construida", "Suelo desnudo", "Nieve y hielo"
     ]
     cmap = ListedColormap(dw_colors)
 
     # Leer AOI
     aoi = gpd.read_file(grid_path)
 
-    # Helper para recortar y preparar cada tif
+    # Función para recortar y preparar cada tif
     def prepare_tif(tif_path):
         with rasterio.open(tif_path) as src:
             aoi_proj = aoi.to_crs(src.crs)
-            out_image, out_transform = mask(src, [mapping(aoi_proj.unary_union)], crop=True)
+            out_image, out_transform = mask(src,[mapping(aoi_proj.unary_union)], crop=True, filled=True, nodata=255)
             crs = src.crs
         da = xr.DataArray(out_image[0], dims=("y", "x"))
+        da = da.where(da != 255)
         da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
         da.rio.write_crs(crs, inplace=True)
         da.rio.write_transform(out_transform, inplace=True)
@@ -39,6 +41,10 @@ def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_pa
     # Recortar ambos
     da1 = prepare_tif(tif1_path)
     da2 = prepare_tif(tif2_path)
+    
+    #da1 = da1.rio.reproject("EPSG:3857")
+    #da2 = da2.rio.reproject("EPSG:3857")
+
 
     # Crear figura con dos subplots verticales
     fig, axs = plt.subplots(2, 1, figsize=(10, 13))
@@ -52,8 +58,10 @@ def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_pa
             extent=da.rio.bounds(),
             interpolation="nearest"
         )
-        ax.set_title(f"Land cover classification ({quarter})", fontsize=13)
+        ax.set_title(f"Cobertura del suelo ({quarter})", fontsize=13)
         ax.axis("off")
+
+    #ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
 
     # Agregar leyenda
     legend_elements = [Patch(facecolor=color, label=label) for color, label in zip(dw_colors, class_labels)]
