@@ -1,27 +1,28 @@
-from datetime import datetime
 import os
 import sys
+from datetime import datetime
 from dotenv import load_dotenv
 
 from src.grid_utils import create_grid
-from src.download_utils import download_dynamic_world, authenticate_gee
-from src.zonal_utils import get_class_percentages_per_grid, compare_class_percentages
+from src.zonal_utils import get_class_percentages_per_grid
 from src.map_utils import plot_landcover_comparison
 
-# Load environment variables from .env file
+# Cargar variables de entorno
 load_dotenv('dot_env_content.txt')
 
-import geopandas as gpd
-
-# Parámetros
-
+# === PARÁMETROS ===
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
 MAIN_PATH = os.path.join(ONEDRIVE_PATH, "datos")
-AOI_PATH = os.path.join(MAIN_PATH, "[TEST] dynamic_world/input/paramo_altiplano.geojson") ## CAMBIAR AQUI POR LA RUTA DEL AOI
-Q1 = "Q12024"
-Q2 = "Q22024"
-GRID_SIZE = 100
-OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world/output")
+AOI_PATH = os.path.join(MAIN_PATH, "area_estudio/paramo_altiplano.geojson")  # Cambia esto si tienes otro AOI
+GRID_SIZE = 100  # en metros
+LOOKBACK_DAYS = 365
+
+# Define dos fechas finales para comparar el último pixel válido
+END_DATE_1 = "2025-12-31"
+END_DATE_2 = "2025-09-30"
+
+# === DIRECTORIOS ===
+OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world_latest/output")
 GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
 IMG_DIR = os.path.join(OUTPUT_DIR, "images")
 CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
@@ -67,32 +68,26 @@ def main():
         grid.to_file(grid_path, driver="GeoJSON")
         print(f"✅ Grilla guardada: {grid_path}")
 
-    # Descargar imágenes
-    start1, end1 = get_quarter_dates(Q1)
-    start2, end2 = get_quarter_dates(Q2)
+    # === Descarga de imágenes DW más recientes ===
+    tif1 = os.path.join(IMG_DIR, f"dw_lastpixel_{END_DATE_1}.tif")
+    tif2 = os.path.join(IMG_DIR, f"dw_lastpixel_{END_DATE_2}.tif")
 
-    aoi_base = os.path.splitext(os.path.basename(AOI_PATH))[0]
-    tif1 = os.path.join(IMG_DIR, f"dynamic_world_{aoi_base}_{Q1}.tif")
-    tif2 = os.path.join(IMG_DIR, f"dynamic_world_{aoi_base}_{Q2}.tif")
-
-    if os.path.exists(tif1):
-        print(f"⏭️ Imagen {Q1} ya existe → {tif1}. Saltando descarga.")
+    if not os.path.exists(tif1):
+        print(f"🌍 Descargando imagen para {END_DATE_1}...")
+        download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
     else:
-        print(f"🌍 Descargando imagen para {Q1} ({start1} a {end1})...")
-        download_dynamic_world(grid_path, start1, end1, tif1)
-        print(f"✅ Imagen {Q1} descargada: {tif1}")
+        print(f"⏭️ Imagen ya existe → {tif1}")
 
-    if os.path.exists(tif2):
-        print(f"⏭️ Imagen {Q2} ya existe → {tif2}. Saltando descarga.")
+    if not os.path.exists(tif2):
+        print(f"🌍 Descargando imagen para {END_DATE_2}...")
+        download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
     else:
-        print(f"🌍 Descargando imagen para {Q2} ({start2} a {end2})...")
-        download_dynamic_world(grid_path, start2, end2, tif2)
-        print(f"✅ Imagen {Q2} descargada: {tif2}")
+        print(f"⏭️ Imagen ya existe → {tif2}")
 
-    # Leer grilla
+    # === Análisis zonal y comparación ===
+    print("📊 Calculando porcentajes por clase para ambas imágenes...")
     grid_gdf = gpd.read_file(grid_path)
 
-    print("📊 Calculando porcentajes por clase para ambas imágenes...")
     df1 = get_class_percentages_per_grid(grid_gdf, tif1)
     df2 = get_class_percentages_per_grid(grid_gdf, tif2)
 
@@ -102,17 +97,15 @@ def main():
     df_comp.to_csv(out_csv, index=False)
     print(f"✅ Comparación guardada en: {out_csv}")
 
+    # === Mapa de comparación ===
     plot_landcover_comparison(
         tif1_path=tif1,
         tif2_path=tif2,
-        q1=Q1,
-        q2=Q2,
+        q1=END_DATE_1,
+        q2=END_DATE_2,
         grid_path=grid_path,
         output_path=os.path.join(OUTPUT_DIR, "maps", f"{aoi_base}_{Q1}_{Q2}.png")
     )
-
-
-
 
 if __name__ == "__main__":
     main()
