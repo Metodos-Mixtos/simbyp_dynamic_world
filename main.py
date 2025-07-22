@@ -3,6 +3,9 @@ import sys
 from datetime import datetime
 from dotenv import load_dotenv
 
+import geopandas as gpd
+
+from src.download_utils import authenticate_gee, download_dynamic_world_latest
 from src.grid_utils import create_grid
 from src.zonal_utils import get_class_percentages_per_grid
 from src.map_utils import plot_landcover_comparison
@@ -26,19 +29,6 @@ OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world_latest/output")
 GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
 IMG_DIR = os.path.join(OUTPUT_DIR, "images")
 CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
-
-
-def get_quarter_dates(qcode):
-    quarter = int(qcode[1])
-    year = int(qcode[2:])
-    start_month = {1: 1, 2: 4, 3: 7, 4: 10}[quarter]
-    end_month = {1: 3, 2: 6, 3: 9, 4: 12}[quarter]
-    start_date = datetime(year, start_month, 1)
-    if end_month == 12:
-        end_date = datetime(year + 1, 1, 1)
-    else:
-        end_date = datetime(year, end_month + 1, 1)
-    return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -91,9 +81,9 @@ def main():
     df1 = get_class_percentages_per_grid(grid_gdf, tif1)
     df2 = get_class_percentages_per_grid(grid_gdf, tif2)
 
-    # Comparar
-    df_comp = compare_class_percentages(df1, df2, Q1, Q2)
-    out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{Q1}_{Q2}.csv")
+    from src.zonal_utils import compare_class_percentages
+    df_comp = compare_class_percentages(df1, df2, END_DATE_1, END_DATE_2)
+    out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.csv")
     df_comp.to_csv(out_csv, index=False)
     print(f"✅ Comparación guardada en: {out_csv}")
 
@@ -104,7 +94,7 @@ def main():
         q1=END_DATE_1,
         q2=END_DATE_2,
         grid_path=grid_path,
-        output_path=os.path.join(OUTPUT_DIR, "maps", f"{aoi_base}_{Q1}_{Q2}.png")
+        output_path=os.path.join(OUTPUT_DIR, "maps", f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.png")
     )
 
 if __name__ == "__main__":
