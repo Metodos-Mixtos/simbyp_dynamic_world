@@ -16,16 +16,17 @@ load_dotenv('dot_env_content.txt')
 # === PARÁMETROS ===
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
 MAIN_PATH = os.path.join(ONEDRIVE_PATH, "datos")
-AOI_PATH = os.path.join(MAIN_PATH, "area_estudio/paramo_altiplano.geojson")  # Cambia esto si tienes otro AOI
-GRID_SIZE = 900  # en metros
+AOI_PATH = os.path.join(MAIN_PATH, "area_estudio/paramo_guerrero.geojson")  # Cambia esto si tienes otro AOI
+GRID_SIZE = 10000  # en metros
 LOOKBACK_DAYS = 365
 
 # Define dos fechas finales para comparar el último pixel válido
-END_DATE_1 = "2025-03-31"
-END_DATE_2 = "2024-12-31"
+END_DATE_1 = "2024-12-31"
+END_DATE_2 = "2025-03-31"
 
 # === DIRECTORIOS ===
-OUTPUT_DIR = os.path.join(MAIN_PATH, "[TEST] dynamic_world_latest/output")
+AOI_NAME = os.path.splitext(os.path.basename(AOI_PATH))[0]
+OUTPUT_DIR = os.path.join(MAIN_PATH, "dynamic_world_latest", AOI_NAME)
 GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
 IMG_DIR = os.path.join(OUTPUT_DIR, "images")
 CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
@@ -64,13 +65,13 @@ def main():
 
     if not os.path.exists(tif1):
         print(f"🌍 Descargando imagen para {END_DATE_1}...")
-        download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
+        #download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
     else:
         print(f"⏭️ Imagen ya existe → {tif1}")
 
     if not os.path.exists(tif2):
         print(f"🌍 Descargando imagen para {END_DATE_2}...")
-        download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
+        #download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
     else:
         print(f"⏭️ Imagen ya existe → {tif2}")
 
@@ -85,6 +86,12 @@ def main():
     out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.csv")
     df_comp.to_csv(out_csv, index=False)
     print(f"✅ Comparación guardada en: {out_csv}")
+    
+    transitions_df = get_transition_changes_per_grid(grid_gdf, tif2, tif1)  
+    # Guarda todo
+    trans_csv = os.path.join(CSV_DIR, f"{aoi_base}_transitions_{END_DATE_2}_to_{END_DATE_1}.csv")
+    transitions_df.to_csv(trans_csv, index=False)
+    print(f"✅ Transiciones por grilla guardadas en: {trans_csv}")
     
     transitions_df = get_transition_changes_per_grid(grid_gdf, tif2, tif1)  
     # Guarda todo
