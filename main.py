@@ -11,7 +11,7 @@ from src.zonal_utils import get_class_percentages_per_grid, compare_class_percen
 from src.map_utils import plot_landcover_comparison
 
 # Cargar variables de entorno
-load_dotenv('dot_env_content.txt')
+load_dotenv('dot_env_content.env')
 
 # === PARÁMETROS ===
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
@@ -65,39 +65,38 @@ def main():
 
     if not os.path.exists(tif1):
         print(f"🌍 Descargando imagen para {END_DATE_1}...")
-        #download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
+        download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
     else:
         print(f"⏭️ Imagen ya existe → {tif1}")
 
     if not os.path.exists(tif2):
         print(f"🌍 Descargando imagen para {END_DATE_2}...")
-        #download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
+        download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
     else:
         print(f"⏭️ Imagen ya existe → {tif2}")
 
     # === Análisis zonal y comparación ===
     print("📊 Calculando porcentajes por clase para ambas imágenes...")
+    
     grid_gdf = gpd.read_file(grid_path)
 
     df1 = get_class_percentages_per_grid(grid_gdf, tif1)
     df2 = get_class_percentages_per_grid(grid_gdf, tif2)
     
     df_comp = compare_class_percentages(df1, df2, END_DATE_1, END_DATE_2)
+    
     out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.csv")
     df_comp.to_csv(out_csv, index=False)
     print(f"✅ Comparación guardada en: {out_csv}")
     
-    transitions_df = get_transition_changes_per_grid(grid_gdf, tif2, tif1)  
-    # Guarda todo
-    trans_csv = os.path.join(CSV_DIR, f"{aoi_base}_transitions_{END_DATE_2}_to_{END_DATE_1}.csv")
-    transitions_df.to_csv(trans_csv, index=False)
-    print(f"✅ Transiciones por grilla guardadas en: {trans_csv}")
+    print("📊 Calculando transiciones por clase para ambas imágenes...")
     
     transitions_df = get_transition_changes_per_grid(grid_gdf, tif2, tif1)  
-    # Guarda todo
+    
     trans_csv = os.path.join(CSV_DIR, f"{aoi_base}_transitions_{END_DATE_2}_to_{END_DATE_1}.csv")
     transitions_df.to_csv(trans_csv, index=False)
     print(f"✅ Transiciones por grilla guardadas en: {trans_csv}")
+
 
     # === Mapa de comparación ===
     plot_landcover_comparison(
