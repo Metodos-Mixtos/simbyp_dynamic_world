@@ -16,7 +16,8 @@ load_dotenv('dot_env_content.env')
 # === PARÁMETROS ===
 ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
 MAIN_PATH = os.path.join(ONEDRIVE_PATH, "datos")
-AOI_PATH = os.path.join(MAIN_PATH, "area_estudio/paramo_guerrero.geojson")  # Cambia esto si tienes otro AOI
+INPUTS_PATH = os.getenv("INPUTS_PATH")
+AOI_PATH = os.path.join(INPUTS_PATH, "area_estudio/paramo_guerrero.geojson")  # Cambia esto si tienes otro AOI
 GRID_SIZE = 10000  # en metros
 LOOKBACK_DAYS = 365
 
