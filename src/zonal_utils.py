@@ -6,6 +6,22 @@ import numpy as np
 from rasterio.mask import mask
 from shapely.geometry import mapping
 
+def get_semester_dates(semestre: str, anio: str):
+    """
+    Retorna las fechas de inicio y fin del análisis para un semestre dado.
+    semestre: "I" o "II"
+    anio: por ejemplo "2025"
+    """
+    semestre = semestre.upper().strip()
+    if semestre == "I":
+        date_before = f"{int(anio)-1}-12-31"
+        current_date = f"{anio}-06-30"
+    elif semestre == "II":
+        date_before = f"{anio}-06-30"
+        current_date = f"{anio}-12-31"
+    else:
+        raise ValueError("Semestre inválido. Usa 'I' o 'II'.")
+    return current_date, date_before
 
 def get_class_percentages_per_grid(grid_gdf, raster_path, class_values=range(9)):
     """Calcula el porcentaje real de cada clase en cada celda, basado en conteo real de píxeles."""
@@ -48,25 +64,25 @@ def compare_class_percentages(df1, df2, q1, q2):
 def get_transition_changes_per_grid(
     grid_gdf: gpd.GeoDataFrame,
     tif_before: str,
-    tif_after: str,
+    tif_current: str,
     nodata_values: tuple = (255, -9999)
 ) -> pd.DataFrame:
     """
     Calcula, por celda de grilla, los cambios:
       - 1 -> cualquier clase distinta de 1
       - 5 -> cualquier clase distinta de 1
-
+    
     Devuelve conteos y porcentajes tanto sobre el total de píxeles válidos
     como sobre el tamaño de la clase origen en t_before.
 
     Columns:
       grid_id
-      n_valid
-      n_1_to_any, pct_1_to_any_grid, pct_1_to_any_of_class1
-      n_5_to_not1, pct_5_to_not1_grid, pct_5_to_not1_of_class5
+      n_validos
+      n_1_a_otro, pct_1_a_otro_grid, pct_1_a_otro_clase1,
+      n_5_a_otro_no1, pct_5_a_otro_no1_grid, pct_5_a_otro_no1_clase5
     """
     # Abrir rasters una sola vez
-    with rasterio.open(tif_before) as src1, rasterio.open(tif_after) as src2:
+    with rasterio.open(tif_before) as src1, rasterio.open(tif_current) as src2:
         # Chequeo básico: mismas dimensiones/proyección (asumido en tu flujo)
         if src1.crs != src2.crs:
             raise ValueError("CRS de los rasters no coincide.")
@@ -101,13 +117,13 @@ def get_transition_changes_per_grid(
             if n_valid == 0:
                 records.append({
                     "grid_id": gid,
-                    "n_valid": 0,
-                    "n_1_to_any": 0,
-                    "pct_1_to_any_grid": 0.0,
-                    "pct_1_to_any_of_class1": 0.0,
-                    "n_5_to_not1": 0,
-                    "pct_5_to_not1_grid": 0.0,
-                    "pct_5_to_not1_of_class5": 0.0
+                    "n_validos": 0,
+                    "n_1_a_otro": 0,
+                    "pct_1_a_otro_grid": 0.0,
+                    "pct_1_a_otro_clase1": 0.0,
+                    "n_5_a_otro_no1": 0,
+                    "pct_5_a_otro_no1_grid": 0.0,
+                    "pct_5_a_otro_no1_clase5": 0.0
                 })
                 continue
 
@@ -134,29 +150,13 @@ def get_transition_changes_per_grid(
 
             records.append({
                 "grid_id": gid,
-                "n_valid": n_valid,
-                "n_1_to_any": n_1_to_any,
-                "pct_1_to_any_grid": pct_1_to_any_grid,
-                "pct_1_to_any_of_class1": pct_1_to_any_of_class1,
-                "n_5_to_not1": n_5_to_not1,
-                "pct_5_to_not1_grid": pct_5_to_not1_grid,
-                "pct_5_to_not1_of_class5": pct_5_to_not1_of_class5
+                "n_validos": n_valid,
+                "n_1_a_otro": n_1_to_any,
+                "pct_1_a_otro_grid": pct_1_to_any_grid,
+                "pct_1_a_otro_clase1": pct_1_to_any_of_class1,
+                "n_5_a_otro_no1": n_5_to_not1,
+                "pct_5_a_otro_no1_grid": pct_5_to_not1_grid,
+                "pct_5_a_otro_no1_clase5": pct_5_to_not1_of_class5
             })
 
     return pd.DataFrame.from_records(records)
-
-
-def top_transition_grids(df: pd.DataFrame, metric: str, top_n: int = 20) -> pd.DataFrame:
-    """
-    Devuelve las TOP-N celdas ordenadas por el 'metric' elegido.
-    Ejemplos de metric:
-      - 'pct_1_to_any_grid'
-      - 'pct_1_to_any_of_class1'
-      - 'pct_5_to_not1_grid'
-      - 'pct_5_to_not1_of_class5'
-      - 'n_1_to_any'
-      - 'n_5_to_not1'
-    """
-    if metric not in df.columns:
-        raise ValueError(f"El metric '{metric}' no existe en el DataFrame.")
-    return df.sort_values(metric, ascending=False).head(top_n).reset_index(drop=True)

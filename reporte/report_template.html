@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}}</title>
+  <style>
+    body { margin:0; padding:0; background:white; color:#1a1a1a; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.6; }
+    header { background:#E4002D; padding:.75rem 1rem; }
+    header.banner {background: #E4002D;width: 100%;margin: 0 auto;padding: 1.5rem 0;}
+    header img { height:60px; }
+    .wrap { max-width:1000px; margin:0 auto; padding:2rem 1rem 5rem; }
+    h1 { font-size:24pt; font-weight:bold; margin:1.5rem 0 .5rem;}
+    .subtitle { color:#555; font-size:12pt; margin-bottom:2rem; }
+    h2 { font-size:20pt; margin:2rem 0 1rem; color:#8F0000; border-bottom:1px solid #ccc; padding-bottom:.3rem; }
+    h3 { font-size:13pt; margin:1rem 0 .5rem; color:#0a0a0a; }
+    h4 { font-size:13pt; margin:0rem 0 0rem; color:#C00000; }
+    .card { background:#fafafa; border:1px solid #ddd; border-radius:6px; padding:1rem; margin-bottom:1rem; }
+    .card--resaltada{background:#FFF6F6; border:1px solid #ddd; border-radius:6px; padding:1rem; margin-bottom:1rem;}
+    figure { margin:1.5rem 0; text-align:center; }
+    figcaption { font-size:11pt; color:#555; margin-top:.5rem; text-align:left; }
+    .badge { display:inline-block; padding:.2rem .6rem; background:#eee; border-radius:4px; font-size:11pt; color:#333; margin-bottom:.5rem; }
+    ul { margin:.5rem 0 .8rem 1.2rem; }
+    .note { background:#f9f9f9; border:1px dashed #bbb; padding:.6rem; border-radius:6px; font-size:12px; color:#333; }
+    .foot { margin-top:2rem; font-size:11pt; color:#666; }
+    .one-col {display: block; margin-bottom: 1rem;}
+    .two-col { display:grid; grid-template-columns:1.2fr .8fr; gap:1rem; }
+    .kpi { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:.75rem; }
+    .kpi .item { background:#fff; border:1px solid #ddd; border-radius:6px; padding:.75rem; }
+    .item b { display:block; font-size:12pt; margin-bottom:.2rem; }
+    .item span { display:block; font-size:11pt; color:#555; }
+  </style>
+</head>
+<body>
+  <header class="banner">
+  <img src="{{LOGO}}" alt="Secretaría de Planeación, Bogotá" style="height:70px;">
+</header>
+  <div class="wrap">
+    <h1>Reporte trimestral de cambios en el páramo</h1>
+    <div class="subtitle">{{SEMESTRE}} trimestre de {{ANIO}}</div>
+
+         <section id="paramos">
+      <h2>Cambios de cobertura del suelo en los páramos de la ciudad</h2>
+          
+        <div class="card">
+          <h3>Metodología</h3>
+          <p>En este reporte se analiza el cambio de coberturas en los páramos aledaños a la ciudad. Se presentan las transformaciones relacionadas con la pérdida de cobertura boscosa y el cambio de arbustos hacia cualquier otra clasificación.</p>
+          <p>La fuente principal es Dynamic World, y el mapa de coberturas trimestral corresponde a un mosaico construido con el dato más reciente disponible por píxel. Posteriormente, el área de cambio de cobertura se calcula en una grilla de 900 metros por 900 metros.</p>
+        </div>
+
+        {{#PARAMOS}}
+        <h4>Páramo {{NOMBRE_PARAMO}}</h4>
+
+        <div class="card">
+          <h3>Resumen</h3>
+          <p>En el {{TRIMESTRE}} trimestre de {{ANIO}}, se reportó una pérdida de {{PERDIDA_BOSQUE_PARAMOS}} hectáreas de bosque en el páramo {{NOMBRE_PARAMO}}. La grilla con más pérdida de bosque fue la {{GRILLA_CON_MAS_PERDIDA}}, con {{PERDIDA_BOSQUE_GRILLA_1}} hectáreas. Por otro lado, no se presentaron cambios de arbustos y matorrales a otras coberturas</p>
+          <div class="note">Para ver la tabla completa, consulte el siguiente <a href={{TABLA_COMPLETA}} target="_blank" rel="noopener noreferrer">enlace.</a></div>
+        </div>
+      
+      <figure class="card--resaltada">
+        <h3>Mapas de comparación en el páramo {{PARAMO_NAME}}</h3>
+        <img src="{{COMPARACION_COBERTURAS}}" alt="Mapas de comparación de coberturas" style="width:60%; border-radius:4px; border:1px solid #ccc;">
+        <figcaption>Fuente: elaboración propia con base en Dynamic Wolrd</figcaption>
+      </figure>
+
+      <figure class="card--resaltada">
+        <h3>Imágenes Sentinel-2 para los periodos estudiados</h3>
+        <img src="{{COMPARACION_S2}}" alt="Imágenes Sentinel-2" style="width:60%; border-radius:4px; border:1px solid #ccc;">
+        <figcaption>Fuente: elaboración propia con base en Sentinel-2.</figcaption>
+      </figure>
+      {{/PARAMOS}}
+    </section>
+
+  </div>
+</body>
+</html>

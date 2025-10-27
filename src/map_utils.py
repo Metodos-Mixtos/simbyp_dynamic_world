@@ -41,10 +41,6 @@ def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_pa
     # Recortar ambos
     da1 = prepare_tif(tif1_path)
     da2 = prepare_tif(tif2_path)
-    
-    #da1 = da1.rio.reproject("EPSG:3857")
-    #da2 = da2.rio.reproject("EPSG:3857")
-
 
     # Crear figura con dos subplots verticales
     fig, axs = plt.subplots(1, 2, figsize=(14, 7), facecolor="none", constrained_layout=True)
@@ -74,3 +70,40 @@ def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_pa
     plt.close()
 
     print(f"🖼️ Mapa comparativo guardado en: {output_path}")
+
+import matplotlib.pyplot as plt
+import rasterio
+from rasterio.plot import show
+import geopandas as gpd
+
+def plot_sentinel_with_grid(tif_path: str, grid_path: str, output_path: str):
+    """
+    Plotea una imagen Sentinel-2 RGB junto con la grilla en color rojo.
+    Guarda el resultado como PNG.
+    """
+    print(f"🗺️ Generando mapa Sentinel-2 + grilla → {output_path}")
+
+    # Leer raster y grilla
+    with rasterio.open(tif_path) as src:
+        img = src.read([1, 2, 3])
+        bounds = src.bounds
+        crs = src.crs
+
+    grid = gpd.read_file(grid_path).to_crs(crs)
+
+    # Crear figura
+    fig, ax = plt.subplots(figsize=(10, 10))
+    show(img, transform=src.transform, ax=ax)
+    grid.boundary.plot(ax=ax, color="red", linewidth=0.8, label="Grilla")
+
+    # Mejorar estilo
+    ax.legend(loc="lower right")
+    ax.set_title("Imagen Sentinel-2 y grilla de análisis", fontsize=14)
+    ax.set_axis_off()
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight", transparent=False)
+    plt.close()
+
+    print(f"✅ Mapa guardado en: {output_path}")
+

@@ -1,113 +1,181 @@
+#!/usr/bin/env python3
+import argparse
 import os
-import sys
-from datetime import datetime
+import json
+from pathlib import Path
 from dotenv import load_dotenv
-
 import geopandas as gpd
 
-from src.download_utils import authenticate_gee, download_dynamic_world_latest
+from src.download_utils import authenticate_gee, download_dynamic_world_latest, download_sentinel_rgb_period
 from src.grid_utils import create_grid
-from src.zonal_utils import get_class_percentages_per_grid, compare_class_percentages, get_transition_changes_per_grid, top_transition_grids
-from src.map_utils import plot_landcover_comparison
+from src.zonal_utils import get_transition_changes_per_grid, get_semester_dates
+from src.map_utils import plot_landcover_comparison, plot_sentinel_with_grid
+from reporte.render_report import render
 
-# Cargar variables de entorno
-load_dotenv('dot_env_content.env')
+# === CARGAR VARIABLES DE ENTORNO ===
+load_dotenv("dot_env_content.env")
 
-# === PARÁMETROS ===
-ONEDRIVE_PATH = os.getenv("ONEDRIVE_PATH")
-MAIN_PATH = os.path.join(ONEDRIVE_PATH, "datos")
+# === RUTAS ===
 INPUTS_PATH = os.getenv("INPUTS_PATH")
-AOI_PATH = os.path.join(INPUTS_PATH, "area_estudio/paramo_guerrero.geojson")  # Cambia esto si tienes otro AOI
-GRID_SIZE = 10000  # en metros
+AOI_DIR = os.path.join(INPUTS_PATH, "dynamic_world", "area_estudio")
+OUTPUTS_BASE = os.path.join(INPUTS_PATH, "dynamic_world", "outputs")
+LOGO_PATH = os.path.join(INPUTS_PATH, "gfw/Logo_SDP.jpeg")
+
+# === PARÁMETROS GENERALES ===
+GRID_SIZE = 10000  # metros
 LOOKBACK_DAYS = 365
 
-# Define dos fechas finales para comparar el último pixel válido
-END_DATE_1 = "2024-12-31"
-END_DATE_2 = "2025-03-31"
 
-# === DIRECTORIOS ===
-AOI_NAME = os.path.splitext(os.path.basename(AOI_PATH))[0]
-OUTPUT_DIR = os.path.join(MAIN_PATH, "dynamic_world_latest", AOI_NAME)
-GRID_DIR = os.path.join(OUTPUT_DIR, "grid")
-IMG_DIR = os.path.join(OUTPUT_DIR, "images")
-CSV_DIR = os.path.join(OUTPUT_DIR, "comparison")
+def process_aoi(aoi_path, date_before, current_date):
+    """Ejecuta el flujo completo para un AOI y devuelve su resumen."""
+    aoi_name = os.path.splitext(os.path.basename(aoi_path))[0]
+    print(f"\n🌱 Procesando AOI: {aoi_name}")
 
-def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    os.makedirs(GRID_DIR, exist_ok=True)
-    os.makedirs(IMG_DIR, exist_ok=True)
-    os.makedirs(CSV_DIR, exist_ok=True)
+    # === Directorios de salida ===
+    output_dir = os.path.join(OUTPUTS_BASE, aoi_name)
+    grid_dir = os.path.join(output_dir, "grilla")
+    img_dir = os.path.join(output_dir, "imagenes")
+    csv_dir = os.path.join(output_dir, "comparacion")
+    map_dir = os.path.join(output_dir, "mapas")
+    os.makedirs(grid_dir, exist_ok=True)
+    os.makedirs(img_dir, exist_ok=True)
+    os.makedirs(csv_dir, exist_ok=True)
+    os.makedirs(map_dir, exist_ok=True)
 
-    if not os.path.exists(AOI_PATH):
-        print(f"❌ ERROR: El archivo AOI no existe en la ruta especificada: {AOI_PATH}")
-        sys.exit(1)
+    # === Crear o cargar grilla ===
+    grid_filename = f"grid_{aoi_name}_{GRID_SIZE}m.geojson"
+    grid_path = os.path.join(grid_dir, grid_filename)
+    if os.path.exists(grid_path):
+        print(f"⏭️ Grilla ya existe: {grid_path}")
+    else:
+        print("📐 Creando grilla...")
+        grid = create_grid(aoi_path, GRID_SIZE)
+        grid.to_file(grid_path, driver="GeoJSON")
+        print(f"✅ Grilla guardada: {grid_path}")
 
+    # === Autenticación GEE ===
     print("🔑 Autenticando con Google Earth Engine...")
     authenticate_gee()
     print("✅ Autenticado correctamente.")
 
-    print("📐 Verificando grilla...")
+    # === Descargar imágenes Dynamic World ===
+    tif_before = os.path.join(img_dir, f"dw_lastpixel_{date_before}.tif")
+    tif_current = os.path.join(img_dir, f"dw_lastpixel_{current_date}.tif")
 
-    aoi_base = os.path.splitext(os.path.basename(AOI_PATH))[0]
-    grid_filename = f"grid_{aoi_base}_{GRID_SIZE}m.geojson"
-    grid_path = os.path.join(GRID_DIR, grid_filename)
-
-    if os.path.exists(grid_path):
-        print(f"⏭️ Grilla ya existe → {grid_path}. Saltando creación.")
+    if not os.path.exists(tif_before):
+        print(f"🌍 Descargando imagen para {date_before}...")
+        download_dynamic_world_latest(aoi_path, date_before, LOOKBACK_DAYS, tif_before)
     else:
-        print("📐 Creando grilla...")
-        grid = create_grid(AOI_PATH, GRID_SIZE)
-        grid.to_file(grid_path, driver="GeoJSON")
-        print(f"✅ Grilla guardada: {grid_path}")
+        print(f"⏭️ Imagen ya existe: {tif_before}")
 
-    # === Descarga de imágenes DW más recientes ===
-    tif1 = os.path.join(IMG_DIR, f"dw_lastpixel_{END_DATE_1}.tif")
-    tif2 = os.path.join(IMG_DIR, f"dw_lastpixel_{END_DATE_2}.tif")
-
-    if not os.path.exists(tif1):
-        print(f"🌍 Descargando imagen para {END_DATE_1}...")
-        download_dynamic_world_latest(grid_path, END_DATE_1, LOOKBACK_DAYS, tif1)
+    if not os.path.exists(tif_current):
+        print(f"🌍 Descargando imagen para {current_date}...")
+        download_dynamic_world_latest(aoi_path, current_date, LOOKBACK_DAYS, tif_current)
     else:
-        print(f"⏭️ Imagen ya existe → {tif1}")
+        print(f"⏭️ Imagen ya existe: {tif_current}")
 
-    if not os.path.exists(tif2):
-        print(f"🌍 Descargando imagen para {END_DATE_2}...")
-        download_dynamic_world_latest(grid_path, END_DATE_2, LOOKBACK_DAYS, tif2)
-    else:
-        print(f"⏭️ Imagen ya existe → {tif2}")
-
-    # === Análisis zonal y comparación ===
-    print("📊 Calculando porcentajes por clase para ambas imágenes...")
-    
+    # === Cálculo de transiciones ===
+    print("📊 Calculando transiciones por clase...")
     grid_gdf = gpd.read_file(grid_path)
+    df_trans = get_transition_changes_per_grid(grid_gdf, tif_before=tif_before, tif_current=tif_current)
 
-    df1 = get_class_percentages_per_grid(grid_gdf, tif1)
-    df2 = get_class_percentages_per_grid(grid_gdf, tif2)
-    
-    df_comp = compare_class_percentages(df1, df2, END_DATE_1, END_DATE_2)
-    
-    out_csv = os.path.join(CSV_DIR, f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.csv")
-    df_comp.to_csv(out_csv, index=False)
-    print(f"✅ Comparación guardada en: {out_csv}")
-    
-    print("📊 Calculando transiciones por clase para ambas imágenes...")
-    
-    transitions_df = get_transition_changes_per_grid(grid_gdf, tif2, tif1)  
-    
-    trans_csv = os.path.join(CSV_DIR, f"{aoi_base}_transitions_{END_DATE_2}_to_{END_DATE_1}.csv")
-    transitions_df.to_csv(trans_csv, index=False)
-    print(f"✅ Transiciones por grilla guardadas en: {trans_csv}")
+    csv_trans = os.path.join(csv_dir, f"{aoi_name}_transiciones_{date_before}_a_{current_date}.csv")
+    df_trans.to_csv(csv_trans, index=False)
+    print(f"✅ Transiciones guardadas en: {csv_trans}")
 
-
-    # === Mapa de comparación ===
+    # === Generar mapa de comparación ===
+    print("🗺️ Generando mapa de comparación...")
+    map_path = os.path.join(map_dir, f"{aoi_name}_{date_before}_{current_date}.png")
     plot_landcover_comparison(
-        tif1_path=tif1,
-        tif2_path=tif2,
-        q1=END_DATE_1,
-        q2=END_DATE_2,
+        tif1_path=tif_before,
+        tif2_path=tif_current,
+        q1=current_date,
+        q2=date_before,
         grid_path=grid_path,
-        output_path=os.path.join(OUTPUT_DIR, "maps", f"{aoi_base}_{END_DATE_1}_{END_DATE_2}.png")
+        output_path=map_path,
     )
+    print(f"✅ Mapa guardado en: {map_path}")
+    
+    sentinel_tif = os.path.join(img_dir, f"sentinel_rgb_{date_before}_a_{current_date}.tif")
+    if not os.path.exists(sentinel_tif):
+        download_sentinel_rgb_period(grid_path, date_before, current_date, sentinel_tif)
 
+    # === Mapa Sentinel + grilla ===
+    mapa_s2_path = os.path.join(map_dir, f"{aoi_name}_sentinel_grilla.png")
+    plot_sentinel_with_grid(sentinel_tif, grid_path, mapa_s2_path)
+
+    # === Calcular estadísticas de pérdida ===
+    pixeles_perdidos_total = df_trans["n_1_a_otro"].sum()
+    hectareas_perdidas_total = round(pixeles_perdidos_total * 0.01, 2)
+    fila_max = df_trans.loc[df_trans["n_1_a_otro"].idxmax()]
+    grilla_mas_perdida = int(fila_max["grid_id"])
+    hectareas_perdidas_max = round(fila_max["n_1_a_otro"] * 0.01, 2)
+
+    # === Rutas relativas ===
+    base_rel = os.path.relpath(output_dir, OUTPUTS_BASE)
+    tabla_path = os.path.join(base_rel, "comparacion", os.path.basename(csv_trans))
+    mapa_coberturas = os.path.join(base_rel, "mapas", os.path.basename(map_path))
+    mapa_s2 = os.path.join(base_rel, "mapas", os.path.basename(map_path))
+
+    # === Diccionario del páramo ===
+    return {
+        "NOMBRE_PARAMO": aoi_name.replace("_", " ").title(),
+        "PERDIDA_BOSQUE_TOTAL": hectareas_perdidas_total,
+        "PERDIDA_BOSQUE_GRILLA_1": hectareas_perdidas_max,
+        "GRILLA_CON_MAS_PERDIDA": grilla_mas_perdida,
+        "TABLA_COMPLETA": tabla_path,
+        "COMPARACION_COBERTURAS": mapa_coberturas,
+        "COMPARACION_S2": mapa_s2_path,
+    }
+
+
+# === FLUJO PRINCIPAL ===
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Pipeline de análisis Dynamic World por semestre")
+    parser.add_argument("--semestre", type=str, required=True, help="Semestre: I o II")
+    parser.add_argument("--anio", type=str, required=True, help="Año en formato YYYY")
+    args = parser.parse_args()
+
+    CURRENT_DATE, DATE_BEFORE = get_semester_dates(args.semestre, args.anio)
+
+    print("🔍 Buscando archivos de páramos en:", AOI_DIR)
+    geojson_files = [
+        os.path.join(AOI_DIR, f)
+        for f in os.listdir(AOI_DIR)
+        if f.startswith("paramo_") and f.endswith(".geojson")
+    ]
+
+    if not geojson_files:
+        print("❌ No se encontraron archivos de páramos en:", AOI_DIR)
+        exit(1)
+
+    print(f"✅ {len(geojson_files)} AOI encontrados:")
+    for f in geojson_files:
+        print(" -", os.path.basename(f))
+
+    # Procesar todos los AOI
+    paramos_list = []
+    for aoi_path in geojson_files:
+        result = process_aoi(aoi_path, DATE_BEFORE, CURRENT_DATE)
+        paramos_list.append(result)
+
+    # === Construir JSON final ===
+    json_final = {
+        "SEMESTRE": args.semestre,
+        "ANIO": args.anio,
+        "LOGO": LOGO_PATH,
+        "PARAMOS": paramos_list,
+    }
+
+    json_path = os.path.join(OUTPUTS_BASE, f"reporte_paramos_{args.anio}_{args.semestre}.json")
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(json_final, f, indent=2, ensure_ascii=False)
+
+    print(f"✅ JSON final guardado en: {json_path}")
+
+    # === Renderizar reporte HTML ===
+    TPL_PATH = Path("dynamic_world/reporte/report_template.html")
+    OUT_PATH = Path(OUTPUTS_BASE) / f"reporte_paramos_{args.anio}_{args.semestre}.html"
+    render(TPL_PATH, Path(json_path), OUT_PATH)
+
+    print("✅ Reporte HTML generado:", OUT_PATH)
