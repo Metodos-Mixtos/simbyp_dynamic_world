@@ -36,8 +36,8 @@
   <img src="{{LOGO}}" alt="Secretaría de Planeación, Bogotá" style="height:70px;">
 </header>
   <div class="wrap">
-    <h1>Reporte trimestral de cambios en el páramo</h1>
-    <div class="subtitle">{{SEMESTRE}} trimestre de {{ANIO}}</div>
+    <h1>Reporte semestral de cambios en el páramo</h1>
+    <div class="subtitle">{{SEMESTRE}} semestre de {{ANIO}}</div>
 
          <section id="paramos">
       <h2>Cambios de cobertura del suelo en los páramos de la ciudad</h2>
@@ -53,21 +53,23 @@
 
         <div class="card">
           <h3>Resumen</h3>
-          <p>En el {{TRIMESTRE}} trimestre de {{ANIO}}, se reportó una pérdida de {{PERDIDA_BOSQUE_PARAMOS}} hectáreas de bosque en el páramo {{NOMBRE_PARAMO}}. La grilla con más pérdida de bosque fue la {{GRILLA_CON_MAS_PERDIDA}}, con {{PERDIDA_BOSQUE_GRILLA_1}} hectáreas. Por otro lado, no se presentaron cambios de arbustos y matorrales a otras coberturas</p>
+          <p>En el {{TRIMESTRE}} trimestre de {{ANIO}}, se reportó una pérdida de {{PERDIDA_BOSQUE_PARAMOS}} hectáreas de bosque en el páramo {{NOMBRE_PARAMO}}. La grilla con más pérdida de bosque fue la {{GRILLA_CON_MAS_PERDIDA}}, con {{PERDIDA_BOSQUE_GRILLA_1}} hectáreas.</p>
           <div class="note">Para ver la tabla completa, consulte el siguiente <a href={{TABLA_COMPLETA}} target="_blank" rel="noopener noreferrer">enlace.</a></div>
         </div>
       
       <figure class="card--resaltada">
-        <h3>Mapas de comparación en el páramo {{PARAMO_NAME}}</h3>
-        <img src="{{COMPARACION_COBERTURAS}}" alt="Mapas de comparación de coberturas" style="width:60%; border-radius:4px; border:1px solid #ccc;">
-        <figcaption>Fuente: elaboración propia con base en Dynamic Wolrd</figcaption>
+        <h3>Mapa interactivo de coberturas en el páramo {{PARAMO_NAME}}</h3>
+        <iframe src="{{MAPA_DW_INTERACTIVO}}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:4px;"></iframe>
+        <figcaption>Fuente: elaboración propia con base en Dynamic World.</figcaption>
       </figure>
+
 
       <figure class="card--resaltada">
         <h3>Imágenes Sentinel-2 para los periodos estudiados</h3>
-        <img src="{{COMPARACION_S2}}" alt="Imágenes Sentinel-2" style="width:60%; border-radius:4px; border:1px solid #ccc;">
+        <iframe src="{{MAPA_SENTINEL_INTERACTIVO}}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:4px;"></iframe>
         <figcaption>Fuente: elaboración propia con base en Sentinel-2.</figcaption>
       </figure>
+
       {{/PARAMOS}}
     </section>
 
