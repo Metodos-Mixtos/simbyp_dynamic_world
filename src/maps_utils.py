@@ -1,112 +1,27 @@
-import os
-import rasterio
-import rioxarray
+from src.aux_utils import log
 import ee
-from rasterio.mask import mask
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from shapely.geometry import mapping
-from matplotlib.colors import ListedColormap
-from matplotlib.patches import Patch
-import xarray as xr
-import matplotlib.pyplot as plt
-from rasterio.plot import show
 import geopandas as gpd
 import folium
-import json
+import os
 import pandas as pd
+import json
+from src.config import PROJECT_ID
 
-def plot_landcover_comparison(tif1_path, tif2_path, q1, q2, grid_path, output_path):
-    # Colores y etiquetas DW
-    dw_colors = [
-        "#419BDF", "#397D49", "#88B053", "#7A87C6",
-        "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
-    ]
-    class_labels = [
-        "Agua", "Árboles", "Pastizales", "Vegetación inundada", "Cultivos",
-        "Arbustos y matorrales", "Área construida", "Suelo desnudo", "Nieve y hielo"
-    ]
-    cmap = ListedColormap(dw_colors)
-
-    # Leer AOI
-    aoi = gpd.read_file(grid_path)
-
-    # Función para recortar y preparar cada tif
-    def prepare_tif(tif_path):
-        with rasterio.open(tif_path) as src:
-            aoi_proj = aoi.to_crs(src.crs)
-            out_image, out_transform = mask(src,[mapping(aoi_proj.unary_union)], crop=True, filled=True, nodata=255)
-            crs = src.crs
-        da = xr.DataArray(out_image[0], dims=("y", "x"))
-        da = da.where(da != 255)
-        da.rio.set_spatial_dims(x_dim="x", y_dim="y", inplace=True)
-        da.rio.write_crs(crs, inplace=True)
-        da.rio.write_transform(out_transform, inplace=True)
-        return da
-
-    # Recortar ambos
-    da1 = prepare_tif(tif1_path)
-    da2 = prepare_tif(tif2_path)
-
-    # Crear figura con dos subplots verticales
-    fig, axs = plt.subplots(1, 2, figsize=(14, 7), facecolor="none", constrained_layout=True)
-
-    for ax, da, quarter in zip(axs, [da1, da2], [q1, q2]):
-        ax.imshow(
-            da.values,
-            cmap=cmap,
-            vmin=0,
-            vmax=8,
-            extent=da.rio.bounds(),
-            interpolation="nearest"
-        )
-        ax.set_title(f"{quarter}", fontsize=16)
-        ax.axis("off")
-
-    #ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
-
-    # Agregar leyenda
-    legend_elements = [Patch(facecolor=color, label=label) for color, label in zip(dw_colors, class_labels)]
-    fig.legend(handles=legend_elements, loc="lower center", bbox_to_anchor=(0.5, -0.05), ncol=4, fontsize=14, frameon=False)
-
-    # Guardar
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    plt.tight_layout(rect=[0, 0.1, 1, 1]) 
-    plt.savefig(output_path, dpi=150, bbox_inches="tight", transparent=True, pad_inches=0)
-    plt.close()
-
-    print(f"🖼️ Mapa comparativo guardado en: {output_path}")
-
-def plot_sentinel_with_grid(tif_path: str, grid_path: str, output_path: str):
+def get_tile_from_image(image, vis_params=None):
     """
-    Plotea una imagen Sentinel-2 RGB junto con la grilla en color rojo.
-    Guarda el resultado como PNG.
+    Devuelve el URL del tile (mapa dinámico) a partir de una ee.Image ya cargada.
+    Evita volver a consultar la colección de Earth Engine.
     """
-    print(f"🗺️ Generando mapa Sentinel-2 + grilla → {output_path}")
-
-    # Leer raster y grilla
-    with rasterio.open(tif_path) as src:
-        img = src.read([1, 2, 3])
-        bounds = src.bounds
-        crs = src.crs
-
-    grid = gpd.read_file(grid_path).to_crs(crs)
-
-    # Crear figura
-    fig, ax = plt.subplots(figsize=(10, 10))
-    show(img, transform=src.transform, ax=ax)
-    grid.boundary.plot(ax=ax, color="red", linewidth=0.8, label="Grilla")
-
-    # Mejorar estilo
-    ax.legend(loc="lower right")
-    ax.set_title("Imagen Sentinel-2 y grilla de análisis", fontsize=14)
-    ax.set_axis_off()
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight", transparent=False)
-    plt.close()
-
-    print(f"✅ Mapa guardado en: {output_path}")
+    if vis_params is None:
+        vis_params = {
+            "min": 0,
+            "max": 8,
+            "palette": [
+                "#419BDF", "#397D49", "#88B053", "#7A87C6",
+                "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
+            ]
+        }
+    return image.getMapId(vis_params)["tile_fetcher"].url_format
 
 def get_tiles_from_ee(
     aoi_path: str,
@@ -119,12 +34,11 @@ def get_tiles_from_ee(
     Devuelve URLs de tiles (T1 y T2) desde Google Earth Engine para Sentinel o Dynamic World.
     Ambos usan lookback_days para tomar la imagen más reciente antes de cada fecha final.
     """
-    ee.Initialize(project="bosques-bogota-416214")
+    ee.Initialize(project=PROJECT_ID)
 
     aoi = gpd.read_file(aoi_path)
     minx, miny, maxx, maxy = aoi.total_bounds
     geom = ee.Geometry.BBox(minx, miny, maxx, maxy)
-
 
     if dataset == "SENTINEL":
         col_id = "COPERNICUS/S2_SR_HARMONIZED"
@@ -141,10 +55,12 @@ def get_tiles_from_ee(
                 .filterBounds(geom)
                 .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
                 .select(sel)
+                .sort("system:time_start", False)
+                .sort("system:index")
             )
 
             # Tomar el mosaico más limpio del período
-            image = collection.median().clip(geom)
+            image = collection.mosaic().clip(geom)
             return image.getMapId(vis)["tile_fetcher"].url_format
 
     elif dataset == "DW":
@@ -183,13 +99,12 @@ def get_tiles_from_ee(
         "t2": get_tile_url(end_t2)
     }
 
-
-def plot_sentinel_interactive_semester(
+def plot_sentinel_interactive(
     grid_path: str,
     aoi_path: str,
     output_path: str,
     annio: int,
-    semestre: str,
+    mes: str,
     tiles_t1=None,
     tiles_t2=None
 ):
@@ -222,19 +137,19 @@ def plot_sentinel_interactive_semester(
     if tiles_t1:
         folium.TileLayer(
             tiles=tiles_t1,
-            name=f"Sentinel-2 T1 (Semestre anterior)",
-            attr="Sentinel-2 EE Median (semestre anterior)",
+            name=f"Imagen de Sentinel-2 para {mes} de {str(int(annio)-1)}",
+            attr="Sentinel-2 EE Mosaic",
             overlay=True,
-            show=False
+            show=True
         ).add_to(m)
 
     if tiles_t2:
         folium.TileLayer(
             tiles=tiles_t2,
-            name=f"Sentinel-2 T2 (Semestre {semestre}, {annio})",
-            attr="Sentinel-2 EE Median (semestre actual)",
+            name=f"Imagen de Sentinel-2 para {mes} de {annio}",
+            attr="Sentinel-2 EE Mosaic",
             overlay=True,
-            show=True
+            show=False
         ).add_to(m)
 
     # === Capa de grilla (roja) ===
@@ -268,22 +183,20 @@ def plot_sentinel_interactive_semester(
 
     folium.LayerControl(collapsed=False).add_to(m)
     m.save(output_path)
-    print(f"✅ Mapa interactivo Sentinel-2 guardado en: {output_path}")
-
-
-def plot_dynamic_world_interactive_semester(
+    
+def plot_dynamic_world_interactive(
     grid_path: str,
     aoi_path: str,
     output_path: str,
     annio: int,
-    semestre: str,
+    mes: str,
     tiles_t1=None,
     tiles_t2=None
 ):
     """
     Crea un mapa interactivo con:
     - Basemap CartoDB Positron
-    - Dynamic World T1 (semestre anterior) y T2 (semestre actual)
+    - Dynamic World T1 (mes anterior) y T2 (mes actual)
     - Grilla vectorial y AOI en negro
     - Etiquetas de número de grilla
     - Leyenda de clases DW
@@ -323,19 +236,19 @@ def plot_dynamic_world_interactive_semester(
     if tiles_t1:
         folium.TileLayer(
             tiles=tiles_t1,
-            name=f"Dynamic World T1 (Semestre anterior, {annio})",
-            attr="Dynamic World EE Último mosaico semestre anterior",
+            name=f"Cobertura del suelo en {mes} de {str(int(annio)-1)}",
+            attr="Dynamic World EE Mosaic",
             overlay=True,
-            show=False
+            show=True
         ).add_to(m)
 
     if tiles_t2:
         folium.TileLayer(
             tiles=tiles_t2,
-            name=f"Dynamic World T2 (Semestre {semestre}, {annio})",
-            attr="Dynamic World EE Último mosaico semestre actual",
+            name=f"Cobertura del suelo en {mes} de {annio}",
+            attr="Dynamic World EE Mosaic",
             overlay=True,
-            show=True
+            show=False
         ).add_to(m)
 
     # === Capa de grilla ===
@@ -371,7 +284,7 @@ def plot_dynamic_world_interactive_semester(
     legend_html = """
     <div style='position: fixed; bottom: 10px; left: 10px; z-index:9999; background-color:white;
                 padding:10px; border:2px solid grey; border-radius:5px; font-size:12px'>
-        <b>Clases Dynamic World</b><br>
+        <b>Leyenda</b><br>
     """
     for label, color in dw_classes:
         legend_html += f"<i style='background:{color};width:15px;height:15px;float:left;margin-right:5px'></i>{label}<br>"
@@ -380,4 +293,42 @@ def plot_dynamic_world_interactive_semester(
 
     folium.LayerControl(collapsed=False).add_to(m)
     m.save(output_path)
-    print(f"✅ Mapa interactivo Dynamic World guardado en: {output_path}")
+
+def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current):
+    """
+    Genera mapas interactivos de Sentinel y Dynamic World.
+    Si se proporcionan dw_before y dw_current, los reutiliza en lugar de reconstruirlos desde GEE.
+    """
+    log("Generando mapas interactivos...", "info")
+
+    # Sentinel siempre se obtiene desde EE
+    tiles_s2 = get_tiles_from_ee(
+        aoi_path=aoi_path,
+        end_t1=date_before, end_t2=current_date,
+        dataset="SENTINEL", lookback_days=lookback_days
+    )
+    plot_sentinel_interactive(
+        grid_path=grid_path, aoi_path=aoi_path,
+        output_path=f"{map_dir}/sentinel_mes.html",
+        annio=anio, mes=mes,
+        tiles_t1=tiles_s2["t1"], tiles_t2=tiles_s2["t2"]
+    )
+
+    # Dynamic World
+    tiles_dw = {
+        "t1": get_tile_from_image(dw_before),
+        "t2": get_tile_from_image(dw_current)
+    }
+
+    plot_dynamic_world_interactive(
+        grid_path=grid_path, aoi_path=aoi_path,
+        output_path=f"{map_dir}/dw_mes.html",
+        annio=anio, mes=mes,
+        tiles_t1=tiles_dw["t1"], tiles_t2=tiles_dw["t2"]
+    )
+
+    log("Mapas interactivos listos.", "success")
+    return {
+        "MAPA_SENTINEL_INTERACTIVO": f"{map_dir}/sentinel_mes.html",
+        "MAPA_DW_INTERACTIVO": f"{map_dir}/dw_mes.html"
+    }

@@ -1,6 +1,28 @@
+from datetime import datetime
+import json
+from pathlib import Path
+import math
 import geopandas as gpd
 from shapely.geometry import box
-import math
+
+def log(msg, level="info"):
+    colors = {
+        "info": "\033[94m",    # azul
+        "success": "\033[92m", # verde
+        "warning": "\033[93m", # amarillo
+        "error": "\033[91m"    # rojo
+    }
+    reset = "\033[0m"
+    prefix = f"[{datetime.now().strftime('%H:%M:%S')}]"
+    print(f"{colors.get(level, '')}{prefix} {msg}{reset}")
+
+def save_json(data, path):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    log(f"JSON guardado en {path}", "success")
+
+def load_json(path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
 
 def create_grid(aoi_path: str, grid_size: int) -> gpd.GeoDataFrame:
     aoi = gpd.read_file(aoi_path)
@@ -27,3 +49,4 @@ def create_grid(aoi_path: str, grid_size: int) -> gpd.GeoDataFrame:
     grid["grid_id"] = range(1, len(grid) + 1)
     grid = grid.to_crs(epsg=4326)
     return grid
+

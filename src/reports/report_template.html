@@ -36,16 +36,17 @@
   <img src="{{LOGO}}" alt="Secretaría de Planeación, Bogotá" style="height:70px;">
 </header>
   <div class="wrap">
-    <h1>Reporte semestral de cambios en el páramo</h1>
-    <div class="subtitle">{{SEMESTRE}} semestre de {{ANIO}}</div>
+    <h1>Reporte mensual de cambios en el páramo</h1>
+    <div class="subtitle">{{MES}} de {{ANIO}}</div>
 
          <section id="paramos">
       <h2>Cambios de cobertura del suelo en los páramos de la ciudad</h2>
           
         <div class="card">
           <h3>Metodología</h3>
-          <p>En este reporte se analiza el cambio de coberturas en los páramos aledaños a la ciudad. Se presentan las transformaciones relacionadas con la pérdida de cobertura boscosa y el cambio de arbustos hacia cualquier otra clasificación.</p>
-          <p>La fuente principal es Dynamic World, y el mapa de coberturas trimestral corresponde a un mosaico construido con el dato más reciente disponible por píxel. Posteriormente, el área de cambio de cobertura se calcula en una grilla de 900 metros por 900 metros.</p>
+          <p>En este reporte se analiza el cambio de coberturas en los páramos aledaños a la ciudad entre {{MES}} de {{ANIO}} y el mismo mes del año anterior. Se presentan las transformaciones relacionadas con la pérdida de cobertura boscosa y de arbustos hacia otras coberturas del suelo.</p>
+          <p>Vale la pena aclarar que solo se tienen en cuenta los píxeles que pasaron de árboles a otras clases, ya que estos representan una pérdida de cobertura boscosa. Por el contrario, los cambios de otras coberturas hacia la categoría de árboles no se consideran, pues pueden deberse principalmente a procesos naturales o efectos del cambio climático (poner cita), los cuales son difícilmente controlables por las autoridades.</p>
+          <p>La fuente principal de información es Dynamic World. El mapa mensual de coberturas corresponde a un mosaico generado con el valor más reciente disponible por píxel dentro de los 365 días previos al último día del mes analizado. Posteriormente, el área de cambio de cobertura se estima sobre una grilla de 10.000 m<sup>2</sup>.</p>
         </div>
 
         {{#PARAMOS}}
@@ -53,21 +54,20 @@
 
         <div class="card">
           <h3>Resumen</h3>
-          <p>En el {{TRIMESTRE}} trimestre de {{ANIO}}, se reportó una pérdida de {{PERDIDA_BOSQUE_PARAMOS}} hectáreas de bosque en el páramo {{NOMBRE_PARAMO}}. La grilla con más pérdida de bosque fue la {{GRILLA_CON_MAS_PERDIDA}}, con {{PERDIDA_BOSQUE_GRILLA_1}} hectáreas.</p>
+          <p>En {{MES}} de {{ANIO}}, {{PERDIDA_BOSQUE_PARAMOS}} hectáreas del páramo {{NOMBRE_PARAMO}}, que previamente estaban clasificadas como bosque, cambiaron de cobertura. La grilla con mayor pérdida de bosque fue la {{GRILLA_CON_MAS_PERDIDA}}, con {{PERDIDA_BOSQUE_GRILLA_1}} hectáreas afectadas.</p>
+          <p>Por otro lado, {{PERDIDA_MATORRAL_PARAMOS}} hectáreas de áreas clasificadas como arbustos y matorrales cambiaron a otras coberturas del suelo distintas a la categoría de árboles. Cabe recordar que esta clase corresponde a la vegetación típica de los páramos, como los frailejones (poner cita).</p>
+          <p>La grilla con mayor pérdida de arbustos y matorrales fue la {{GRILLA_CON_MAS_CAMBIO_5}}, con {{PERDIDA_MATORRAL_GRILLA_1}} hectáreas afectadas.</p>
           <div class="note">Para ver la tabla completa, consulte el siguiente <a href={{TABLA_COMPLETA}} target="_blank" rel="noopener noreferrer">enlace.</a></div>
         </div>
       
       <figure class="card--resaltada">
-        <h3>Mapa interactivo de coberturas en el páramo {{PARAMO_NAME}}</h3>
+        <h3>Mapa de coberturas en el páramo {{PARAMO_NAME}}</h3>
         <iframe src="{{MAPA_DW_INTERACTIVO}}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:4px;"></iframe>
-        <figcaption>Fuente: elaboración propia con base en Dynamic World.</figcaption>
       </figure>
 
-
       <figure class="card--resaltada">
-        <h3>Imágenes Sentinel-2 para los periodos estudiados</h3>
+        <h3>Imágenes Sentinel-2 para los periodos de reporte</h3>
         <iframe src="{{MAPA_SENTINEL_INTERACTIVO}}" width="100%" height="600px" style="border:1px solid #ccc; border-radius:4px;"></iframe>
-        <figcaption>Fuente: elaboración propia con base en Sentinel-2.</figcaption>
       </figure>
 
       {{/PARAMOS}}
