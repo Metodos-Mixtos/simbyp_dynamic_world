@@ -5,6 +5,7 @@ import math
 import geopandas as gpd
 from shapely.geometry import box
 
+
 def log(msg, level="info"):
     colors = {
         "info": "\033[94m",    # azul
@@ -50,3 +51,6 @@ def create_grid(aoi_path: str, grid_size: int) -> gpd.GeoDataFrame:
     grid = grid.to_crs(epsg=4326)
     return grid
 
+def make_relative(path, base_dir):
+    """Devuelve una ruta relativa entre `path` y `base_dir`."""
+    return os.path.relpath(Path(path).resolve(), start=Path(base_dir).resolve())

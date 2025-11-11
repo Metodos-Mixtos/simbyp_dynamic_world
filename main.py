@@ -8,7 +8,6 @@ from src.maps_utils import generate_maps
 from src.reports.render_report import render
 from src.aux_utils import log, save_json, create_grid
 from datetime import datetime
-from calendar import month_name
 import locale
 
 # Setear locale a español para nombres de meses
@@ -117,11 +116,14 @@ if __name__ == "__main__":
 
     geojson_files = [os.path.join(AOI_DIR, f) for f in os.listdir(AOI_DIR) if f.startswith("paramo_")]
     results = [process_aoi(p, date_before, current_date, args.anio, args.mes, period_dir) for p in geojson_files]
+    
+    # Convertir LOGO_PATH a ruta relativa respecto al HTML
+    logo_rel = os.path.relpath(LOGO_PATH, start=period_dir)
 
     json_final = {
         "MES": month_str,
         "ANIO": args.anio,
-        "LOGO": LOGO_PATH,
+        "LOGO": logo_rel,
         "PARAMOS": results
     }
 
