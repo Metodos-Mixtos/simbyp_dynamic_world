@@ -5,18 +5,21 @@ Este módulo permite analizar los cambios interanuales en las coberturas de la t
 Genera estadísticas de cambio por grilla, mapas interactivos (Folium) y un reporte técnico automatizado en formato HTML.
 
 ## Requisitos del sistema
-- Python 3.9 o superior  
+- Python 3.8 o superior  
 - Cuenta y autenticación activa en **Google Earth Engine**  
-- Entorno virtual recomendado (`venv` o `conda`)
+- Entorno virtual recomendado (`venv`)
 
 ## Instalación
+
+**⚠️ IMPORTANTE:** Este módulo NO tiene su propio `requirements.txt`. Todas las dependencias se instalan desde la raíz del repositorio.
+
 ```bash
-git clone <url_del_repositorio>
-cd dynamic_world
-python3 -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
+# Desde la raíz del repositorio (bosques-bog/)
 pip install -r requirements.txt
+earthengine authenticate
 ```
+
+Ver [../INSTALLATION_GUIDE.md](../INSTALLATION_GUIDE.md) para instrucciones completas.
 
 ## Configuración del entorno
 El módulo requiere un archivo `.env` con las siguientes variables:

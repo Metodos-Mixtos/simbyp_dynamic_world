@@ -2,7 +2,7 @@
 import argparse
 import os
 from pathlib import Path
-from src.config import AOI_DIR, OUTPUTS_BASE, LOGO_PATH, GRID_SIZE, LOOKBACK_DAYS
+from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS
 from src.dw_utils import get_dynamic_world_image, compute_transitions
 from src.maps_utils import generate_maps
 from src.reports.render_report import render
@@ -117,13 +117,17 @@ if __name__ == "__main__":
     geojson_files = [os.path.join(AOI_DIR, f) for f in os.listdir(AOI_DIR) if f.startswith("paramo_")]
     results = [process_aoi(p, date_before, current_date, args.anio, args.mes, period_dir) for p in geojson_files]
     
-    # Convertir LOGO_PATH a ruta relativa respecto al HTML
-    logo_rel = os.path.relpath(LOGO_PATH, start=period_dir)
+    # Convertir rutas de imágenes a relativas respecto al HTML
+    header_img1_rel = os.path.relpath(HEADER_IMG1_PATH, start=period_dir)
+    header_img2_rel = os.path.relpath(HEADER_IMG2_PATH, start=period_dir)
+    footer_img_rel = os.path.relpath(FOOTER_IMG_PATH, start=period_dir)
 
     json_final = {
         "MES": month_str,
         "ANIO": args.anio,
-        "LOGO": logo_rel,
+        "HEADER_IMG1": header_img1_rel,
+        "HEADER_IMG2": header_img2_rel,
+        "FOOTER_IMG": footer_img_rel,
         "PARAMOS": results
     }
 

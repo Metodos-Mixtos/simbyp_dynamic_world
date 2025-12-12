@@ -5,13 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{TITLE}}</title>
   <style>
-    body { margin:0; padding:0; background:white; color:#1a1a1a; font-family: Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1.6; }
-    header { background:#E4002D; padding:.75rem 1rem; }
-    header.banner {background: #E4002D;width: 100%;margin: 0 auto;padding: 1.5rem 0;}
-    header img { height:60px; }
+    body { margin:0; padding:0; background:white; color:#1a1a1a; font-family: Arial, sans-serif; font-size: 14px; line-height: 1.6; }
+    header.banner { background:#e3351f; width:100%; margin:0; padding:1.5rem 0; display:flex; justify-content:space-between; align-items:center; }
+    header.banner img { height:70px; margin:0 2rem; }
+    footer.banner { background:#e3351f; width:100%; margin:3rem 0 0 0; padding:1.5rem 0; text-align:center; }
+    footer.banner img { height:70px; }
     .wrap { max-width:1000px; margin:0 auto; padding:2rem 1rem 5rem; }
-    h1 { font-size:24pt; font-weight:bold; margin:1.5rem 0 .5rem;}
-    .subtitle { color:#555; font-size:12pt; margin-bottom:2rem; }
+    h1 { font-size:24pt; font-weight:bold; margin:1.5rem 0 .5rem; text-align:center; }
+    .subtitle { color:#555; font-size:12pt; margin-bottom:2rem; text-align:center; }
     h2 { font-size:20pt; margin:2rem 0 1rem; color:#8F0000; border-bottom:1px solid #ccc; padding-bottom:.3rem; }
     h3 { font-size:13pt; margin:1rem 0 .5rem; color:#0a0a0a; }
     h4 { font-size:13pt; margin:0rem 0 0rem; color:#C00000; }
@@ -33,8 +34,9 @@
 </head>
 <body>
   <header class="banner">
-  <img src="{{LOGO}}" alt="Secretaría de Planeación, Bogotá" style="height:70px;">
-</header>
+    <img src="{{HEADER_IMG1}}" alt="Aquí sí pasa Bogotá">
+    <img src="{{HEADER_IMG2}}" alt="Bogotá">
+  </header>
   <div class="wrap">
     <h1>Reporte mensual de cambios en el páramo</h1>
     <div class="subtitle">{{MES}} de {{ANIO}}</div>
@@ -74,5 +76,9 @@
     </section>
 
   </div>
+  
+  <footer class="banner">
+    <img src="{{FOOTER_IMG}}" alt="Secretaría de Planeación">
+  </footer>
 </body>
 </html>
