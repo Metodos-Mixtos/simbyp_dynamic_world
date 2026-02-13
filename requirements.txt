@@ -10,3 +10,4 @@ earthengine-api>=0.1.400
 jinja2>=3.1
 python-dotenv>=1.0
 gcsfs
+google-cloud-storage>=2.10

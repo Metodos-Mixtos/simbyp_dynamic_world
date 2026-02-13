@@ -2,17 +2,25 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Buscar .env en la raíz del proyecto (3 niveles arriba: src -> dynamic_world -> bosques-bog -> raíz)
-env_path = Path(__file__).parent.parent.parent.parent / "dot_env_content.env"
-load_dotenv(env_path)
+# Buscar .env en la raíz del proyecto
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path, override=True)
 
 # === Paths base ===
 INPUTS_PATH = os.getenv("INPUTS_PATH")
-AOI_DIR = os.path.join(INPUTS_PATH, "area_estudio", "dynamic_world")
-OUTPUTS_BASE = os.path.join(INPUTS_PATH, "dynamic_world", "outputs")
-HEADER_IMG1_PATH = os.path.join(INPUTS_PATH, "area_estudio", "asi_4.png")
-HEADER_IMG2_PATH = os.path.join(INPUTS_PATH, "area_estudio", "bogota_4.png")
-FOOTER_IMG_PATH = os.path.join(INPUTS_PATH, "area_estudio", "secre_5.png")
+AOI_DIR = f"{INPUTS_PATH}/area_estudio/dynamic_world"
+HEADER_IMG1_PATH = f"{INPUTS_PATH}/SDP Logos/asi_4.png"
+HEADER_IMG2_PATH = f"{INPUTS_PATH}/SDP Logos/bogota_4.png"
+FOOTER_IMG_PATH = f"{INPUTS_PATH}/SDP Logos/secre_5.png"
+
+# === Cloud Storage ===
+GCS_OUTPUTS_BASE = os.getenv("OUTPUTS_BASE_PATH", "gs://reportes-simbyp")
+GCS_BUCKET_NAME = GCS_OUTPUTS_BASE.replace("gs://", "")
+GCS_PREFIX = "dynamic_world"  # Carpeta dentro del bucket
+USE_GCS = True  # Cambiar a False para guardar localmente
+
+# === Outputs locales (temporal) ===
+OUTPUTS_BASE = os.path.join(os.getcwd(), "temp_data")
 
 # === Parámetros globales ===
 GRID_SIZE = 10000  # metros
