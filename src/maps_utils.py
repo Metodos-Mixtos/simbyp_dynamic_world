@@ -1,3 +1,8 @@
+"""
+Pipeline de generación de mapas interactivos Folium con overlays PNG.
+Genera PNGs de DW y Sentinel con threshold inteligente y HTMLs interactivos.
+"""
+
 import geemap
 from src.aux_utils import log
 import ee
@@ -8,562 +13,182 @@ import pandas as pd
 from pathlib import Path
 import json
 from src.config import PROJECT_ID
+from PIL import Image
+import numpy as np
 
-def get_tile_from_image(image, vis_params=None):
+def make_nas_transparent(png_path, image_type='sentinel'):
+    """Hace NAs transparentes en imágenes PNG"""
+    try:
+        with Image.open(png_path) as img:
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            data = np.array(img)
+            mask = (data[:,:,0] == 0) & (data[:,:,1] == 0) & (data[:,:,2] == 0)
+            data[mask, 3] = 0
+            result_img = Image.fromarray(data, 'RGBA')
+            result_img.save(png_path)
+    except Exception as e:
+        log(f"Error transparencia en {png_path}: {e}", "warning")
+
+def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current, df_transitions=None, aoi_name=None):
     """
-    Devuelve el URL del tile (mapa dinámico) a partir de una ee.Image ya cargada.
-    Evita volver a consultar la colección de Earth Engine.
-    """
-    if vis_params is None:
-        vis_params = {
-            "min": 0,
-            "max": 8,
-            "palette": [
-                "#419BDF", "#397D49", "#88B053", "#7A87C6",
-                "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
-            ]
-        }
-    return image.getMapId(vis_params)["tile_fetcher"].url_format
-
-def get_tiles_from_ee(
-    aoi_path: str,
-    end_t1: str,
-    end_t2: str,
-    dataset: str = "SENTINEL",
-    lookback_days: int = 365
-):
-    """
-    Devuelve URLs de tiles (T1 y T2) desde Google Earth Engine para Sentinel o Dynamic World.
-    Ambos usan lookback_days para tomar la imagen más reciente antes de cada fecha final.
-    """
-    ee.Initialize(project=PROJECT_ID)
-
-    aoi = gpd.read_file(aoi_path)
-    minx, miny, maxx, maxy = aoi.total_bounds
-    geom = ee.Geometry.BBox(minx, miny, maxx, maxy)
-
-    if dataset == "SENTINEL":
-        col_id = "COPERNICUS/S2_SR_HARMONIZED"
-        vis = {"min": 0, "max": 3000, "bands": ["B4", "B3", "B2"], "gamma": 1.1}
-        sel = ["B4", "B3", "B2"]
-
-        def get_tile_url(end):
-            end_ee = ee.Date(end)
-            start_ee = end_ee.advance(-lookback_days, "day")
-
-            collection = (
-                ee.ImageCollection(col_id)
-                .filterDate(start_ee, end_ee)
-                .filterBounds(geom)
-                .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
-                .select(sel)
-                .sort("system:time_start", False)
-                .sort("system:index")
-            )
-
-            # Tomar el mosaico más limpio del período
-            image = collection.mosaic().clip(geom)
-            return image.getMapId(vis)["tile_fetcher"].url_format
-
-    elif dataset == "DW":
-        col_id = "GOOGLE/DYNAMICWORLD/V1"
-        vis = {
-            "min": 0,
-            "max": 8,
-            "palette": [
-                "#419BDF", "#397D49", "#88B053", "#7A87C6",
-                "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
-            ]
-        }
-        sel = ["label"]
-
-        def get_tile_url(end):
-            end_ee = ee.Date(end)
-            start_ee = end_ee.advance(-lookback_days, "day")
-
-            collection = (
-                ee.ImageCollection(col_id)
-                .filterDate(start_ee, end_ee)
-                .filterBounds(geom)
-                .select(sel)
-                .sort("system:time_start", False)
-                .sort("system:index")
-            )
-
-            image = collection.mosaic().clip(geom)
-            return image.getMapId(vis)["tile_fetcher"].url_format
-
-    else:
-        raise ValueError("dataset debe ser 'SENTINEL' o 'DW'")
-
-    return {
-        "t1": get_tile_url(end_t1),
-        "t2": get_tile_url(end_t2)
-    }
-
-def plot_sentinel_interactive(
-    grid_path: str,
-    aoi_path: str,
-    output_path: str,
-    annio: int,
-    mes: str,
-    tiles_t1=None,
-    tiles_t2=None,
-    png_t1=None,
-    png_t2=None,
-    bounds=None
-):
-    """
-    Mapa interactivo con:
-    - Basemap CartoDB Positron
-    - Sentinel-2 T1 y T2
-    - Grilla y AOI en rojo
-    - Números de grilla
-    """
-
-    def sanitize_gdf(gdf):
-        for c in gdf.columns:
-            if pd.api.types.is_datetime64_any_dtype(gdf[c]):
-                gdf[c] = gdf[c].astype(str)
-        return gdf
-
-    aoi = gpd.read_file(aoi_path).to_crs(epsg=4326)
-    centroid = aoi.geometry.unary_union.centroid
-    lat, lon = centroid.y, centroid.x
-
-    # Crear mapa base centrado temporalmente
-    m = folium.Map(tiles="CartoDB positron")
-
-    # Ajustar límites al AOI automáticamente
-    minx, miny, maxx, maxy = aoi.total_bounds
-    m.fit_bounds([[miny, minx], [maxy, maxx]])
-
-    # === Sentinel overlays ===
-    # Si hay PNGs y bounds, usar ImageOverlay; si no, usar TileLayer (retrocompatibilidad)
-    if png_t1 and bounds:
-        folium.raster_layers.ImageOverlay(
-            name=f"Sentinel-2 PNG {mes} {str(int(annio)-1)}",
-            image=png_t1,
-            bounds=bounds,
-            opacity=0.8,
-            interactive=True,
-            cross_origin=False,
-            zindex=1,
-            show=True
-        ).add_to(m)
-    elif tiles_t1:
-        folium.TileLayer(
-            tiles=tiles_t1,
-            name=f"Imagen de Sentinel-2 para {mes} de {str(int(annio)-1)}",
-            attr="Sentinel-2 EE Mosaic",
-            overlay=True,
-            show=True
-        ).add_to(m)
-
-    if png_t2 and bounds:
-        folium.raster_layers.ImageOverlay(
-            name=f"Sentinel-2 PNG {mes} {annio}",
-            image=png_t2,
-            bounds=bounds,
-            opacity=0.8,
-            interactive=True,
-            cross_origin=False,
-            zindex=2,
-            show=False
-        ).add_to(m)
-    elif tiles_t2:
-        folium.TileLayer(
-            tiles=tiles_t2,
-            name=f"Imagen de Sentinel-2 para {mes} de {annio}",
-            attr="Sentinel-2 EE Mosaic",
-            overlay=True,
-            show=False
-        ).add_to(m)
-
-    # === Capa de grilla (roja) ===
-    if os.path.exists(grid_path):
-        grid = sanitize_gdf(gpd.read_file(grid_path).to_crs(epsg=4326))
-        folium.GeoJson(
-            json.loads(grid.to_json()),
-            name="Grilla de análisis",
-            style_function=lambda x: {"color": "red", "weight": 0.6, "fillOpacity": 0},
-            show=True
-        ).add_to(m)
-
-        # Agregar números de grilla
-        for _, row in grid.iterrows():
-            centroid = row.geometry.centroid
-            grid_id = row.get("grid_id", "")
-            folium.map.Marker(
-                [centroid.y, centroid.x],
-                icon=folium.DivIcon(
-                    html=f'<div style="font-size:10pt;color:red">{grid_id}</div>'
-                )
-            ).add_to(m)
-
-    # === AOI (borde rojo) ===
-    folium.GeoJson(
-        json.loads(aoi.to_json()),
-        name="Área de estudio",
-        style_function=lambda x: {"color": "red", "weight": 1.2, "fillOpacity": 0},
-        show=True
-    ).add_to(m)
-
-    folium.LayerControl(collapsed=False).add_to(m)
-    m.save(output_path)
+    Pipeline COMPLETO:
+    1. Genera PNGs de DW y Sentinel con threshold 15%
+    2. Genera HTMLs interactivos (dw_mes.html, sentinel_mes.html)
     
-def plot_dynamic_world_interactive(
-    grid_path: str,
-    aoi_path: str,
-    output_path: str,
-    annio: int,
-    mes: str,
-    tiles_t1=None,
-    tiles_t2=None,
-    png_t1=None,
-    png_t2=None,
-    bounds=None
-):
+    Estructura en map_dir:
+    ├── imagenes/
+    │   ├── dw/
+    │   └── sentinel/
+    ├── dw_mes.html
+    └── sentinel_mes.html
     """
-    Crea un mapa interactivo con:
-    - Basemap CartoDB Positron
-    - Dynamic World T1 (mes anterior) y T2 (mes actual)
-    - Grilla vectorial y AOI en negro
-    - Etiquetas de número de grilla
-    - Leyenda de clases DW
-    """
-
-    dw_classes = [
-        ("Agua", "#419BDF"),
-        ("Árboles", "#397D49"),
-        ("Pastizales", "#88B053"),
-        ("Vegetación inundada", "#7A87C6"),
-        ("Cultivos", "#E49635"),
-        ("Arbustos y matorrales", "#DFC35A"),
-        ("Área construida", "#C4281B"),
-        ("Suelo desnudo", "#A59B8F"),
-        ("Nieve y hielo", "#B39FE1")
-    ]
-
-    def sanitize_gdf(gdf):
-        for c in gdf.columns:
-            if pd.api.types.is_datetime64_any_dtype(gdf[c]):
-                gdf[c] = gdf[c].astype(str)
-        return gdf
-
-    # === AOI ===
-    aoi = gpd.read_file(aoi_path).to_crs(epsg=4326)
-    centroid = aoi.geometry.unary_union.centroid
-    lat, lon = centroid.y, centroid.x
-
-    # Crear mapa base centrado temporalmente
-    m = folium.Map(tiles="CartoDB positron")
-
-    # Ajustar límites al AOI automáticamente
-    minx, miny, maxx, maxy = aoi.total_bounds
-    m.fit_bounds([[miny, minx], [maxy, maxx]])
-
-    # === Dynamic World overlays ===
-    if png_t1 and bounds:
-        folium.raster_layers.ImageOverlay(
-            name=f"DW PNG {mes} {str(int(annio)-1)}",
-            image=png_t1,
-            bounds=bounds,
-            opacity=0.8,
-            interactive=True,
-            cross_origin=False,
-            zindex=1,
-            show=True
-        ).add_to(m)
-    elif tiles_t1:
-        folium.TileLayer(
-            tiles=tiles_t1,
-            name=f"Cobertura del suelo en {mes} de {str(int(annio)-1)}",
-            attr="Dynamic World EE Mosaic",
-            overlay=True,
-            show=True
-        ).add_to(m)
-
-    if png_t2 and bounds:
-        folium.raster_layers.ImageOverlay(
-            name=f"DW PNG {mes} {annio}",
-            image=png_t2,
-            bounds=bounds,
-            opacity=0.8,
-            interactive=True,
-            cross_origin=False,
-            zindex=2,
-            show=False
-        ).add_to(m)
-    elif tiles_t2:
-        folium.TileLayer(
-            tiles=tiles_t2,
-            name=f"Cobertura del suelo en {mes} de {annio}",
-            attr="Dynamic World EE Mosaic",
-            overlay=True,
-            show=False
-        ).add_to(m)
-
-    # === Capa de grilla ===
-    if os.path.exists(grid_path):
-        grid = sanitize_gdf(gpd.read_file(grid_path).to_crs(epsg=4326))
-        folium.GeoJson(
-            json.loads(grid.to_json()),
-            name="Grilla de análisis",
-            style_function=lambda x: {"color": "black", "weight": 0.6, "fillOpacity": 0},
-            show=True
-        ).add_to(m)
-
-        # Agregar números de grilla
-        for _, row in grid.iterrows():
-            centroid = row.geometry.centroid
-            grid_id = row.get("grid_id", "")
-            folium.map.Marker(
-                [centroid.y, centroid.x],
-                icon=folium.DivIcon(
-                    html=f'<div style="font-size:10pt;color:black">{grid_id}</div>'
-                )
-            ).add_to(m)
-
-    # === AOI (borde negro) ===
-    folium.GeoJson(
-        json.loads(aoi.to_json()),
-        name="Área de estudio",
-        style_function=lambda x: {"color": "black", "weight": 1.2, "fillOpacity": 0},
-        show=True
-    ).add_to(m)
-
-    # === Leyenda ===
-    legend_html = """
-    <div style='position: fixed; bottom: 10px; left: 10px; z-index:9999; background-color:white;
-                padding:10px; border:2px solid grey; border-radius:5px; font-size:12px'>
-        <b>Leyenda</b><br>
-    """
-    for label, color in dw_classes:
-        legend_html += f"<i style='background:{color};width:15px;height:15px;float:left;margin-right:5px'></i>{label}<br>"
-    legend_html += "</div>"
-    m.get_root().html.add_child(folium.Element(legend_html))
-
-    folium.LayerControl(collapsed=False).add_to(m)
-    m.save(output_path)
-
-def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current):
-    # === Exportar PNGs por celda de grilla para ambos periodos ===
     import shapely
-    grid_gdf = gpd.read_file(grid_path).to_crs(epsg=4326)
+    from src.png_map import generar_mapa_png
+    
+    log("="*70, "info")
+    log(f"GENERANDO MAPAS: {aoi_name}", "info")
+    log("="*70, "info")
+    
+    try:
+        grid_gdf = gpd.read_file(grid_path).to_crs(epsg=4326)
+        log(f"Grilla: {len(grid_gdf)} grids", "info")
+    except Exception as e:
+        log(f"ERROR grilla: {e}", "error")
+        return {}
+    
     from src.dw_utils import authenticate_gee
     authenticate_gee()
-    # Crear carpetas para imágenes
+    
+    # Crear carpetas
     dw_dir = Path(map_dir) / 'imagenes' / 'dw'
     sentinel_dir = Path(map_dir) / 'imagenes' / 'sentinel'
     dw_dir.mkdir(parents=True, exist_ok=True)
     sentinel_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Determinar qué grillas procesar (threshold 15%)
+    threshold_pct = 15.0
+    grids_to_process = set()
+    
+    if aoi_name and "altiplano" in aoi_name.lower():
+        grids_to_process = set(grid_gdf["grid_id"].tolist())
+        log(f"Altiplano: TODAS {len(grid_gdf)} grillas", "info")
+    elif df_transitions is not None and not df_transitions.empty:
+        mask = (df_transitions["pct_1_a_otro_clase1"] >= threshold_pct) | (df_transitions["pct_5_a_otro_no1_clase5"] >= threshold_pct)
+        grids_to_process = set(df_transitions[mask]["grid_id"].tolist())
+        log(f"Filtro >15%: {len(grids_to_process)}/{len(grid_gdf)} grillas", "info")
+    else:
+        grids_to_process = set(grid_gdf["grid_id"].tolist())
+        log(f"Sin filtro: TODAS {len(grids_to_process)} grillas", "warning")
+    
+    # === PASO 1: GENERAR PNGs ===
+    log("\n[1/3] Generando PNGs...", "info")
+    png_count_dw = 0
+    png_count_sentinel = 0
+    
     for _, row in grid_gdf.iterrows():
         grid_id = row.get("grid_id", _)
-        geom = row.geometry
-        if geom.is_empty:
+        if grid_id not in grids_to_process:
             continue
+        
+        geom = row.geometry
+        if geom.is_empty or geom.geom_type not in ["Polygon", "MultiPolygon"]:
+            continue
+        
         if geom.geom_type == "MultiPolygon":
             geom = shapely.ops.unary_union([p for p in geom.geoms if not p.is_empty])
+        
         gdf_tmp = gpd.GeoDataFrame(geometry=[geom], crs="EPSG:4326")
         ee_geom = geemap.geopandas_to_ee(gdf_tmp).geometry()
-        import os
-        from PIL import Image
-        # Sentinel periodo anterior (t1)
-        sent_t1_png = sentinel_dir / f"sentinel_grid_{grid_id}_{date_before}.png"
-        if not sent_t1_png.exists():
-            try:
-                col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
-                    .filterDate(date_before, date_before) \
-                    .filterBounds(ee_geom) \
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30)) \
-                    .select(["B4", "B3", "B2"])
-                img = col.median().clip(ee_geom)
-                mask = img.mask().reduceRegion(
-                    reducer=ee.Reducer.sum(),
-                    geometry=ee_geom,
-                    scale=10,
-                    maxPixels=1e8
-                ).getInfo()
-                has_data = any([v for v in mask.values() if v is not None and v > 0])
-                if not has_data:
-                    log(f"Sentinel celda {grid_id} T1 sin datos, no se exporta PNG", "warning")
-                else:
-                    geemap.download_ee_image(
-                        image=img,
-                        filename=str(sent_t1_png),
-                        region=ee_geom,
-                        scale=10,
-                        crs="EPSG:4326",
-                        dtype="uint16"
-                    )
-                    if sent_t1_png.exists() and sent_t1_png.stat().st_size > 100:
-                        try:
-                            with Image.open(sent_t1_png) as im:
-                                im.verify()
-                            log(f"Sentinel celda {grid_id} T1 PNG guardada", "success")
-                        except Exception as e:
-                            log(f"Sentinel celda {grid_id} T1 PNG corrupta: {e}", "error")
-                            sent_t1_png.unlink()
+        
+        # DW T1 y T2
+        for png_file, date_str, img_source in [
+            (dw_dir / f"dw_grid_{grid_id}_{date_before}.png", date_before, dw_before),
+            (dw_dir / f"dw_grid_{grid_id}_{current_date}.png", current_date, dw_current)
+        ]:
+            if not png_file.exists():
+                try:
+                    vis_params = {"min": 0, "max": 8, "palette": ["#419BDF", "#397D49", "#88B053", "#7A87C6", "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"]}
+                    dw_img = img_source.clip(ee_geom).visualize(**vis_params)
+                    geemap.download_ee_image(image=dw_img, filename=str(png_file), region=ee_geom, scale=10, crs="EPSG:4326", dtype="uint8")
+                    if png_file.exists() and png_file.stat().st_size > 1000:
+                        Image.open(png_file).verify()
+                        make_nas_transparent(str(png_file), 'dw')
+                        png_count_dw += 1
                     else:
-                        log(f"Sentinel celda {grid_id} T1 PNG vacía, se elimina", "warning")
-                        if sent_t1_png.exists():
-                            sent_t1_png.unlink()
-            except Exception as e:
-                log(f"Error Sentinel celda {grid_id} T1: {e}", "error")
-        # Sentinel periodo actual (t2)
-        sent_t2_png = sentinel_dir / f"sentinel_grid_{grid_id}_{current_date}.png"
-        if not sent_t2_png.exists():
-            try:
-                col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
-                    .filterDate(current_date, current_date) \
-                    .filterBounds(ee_geom) \
-                    .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30)) \
-                    .select(["B4", "B3", "B2"])
-                img = col.median().clip(ee_geom)
-                mask = img.mask().reduceRegion(
-                    reducer=ee.Reducer.sum(),
-                    geometry=ee_geom,
-                    scale=10,
-                    maxPixels=1e8
-                ).getInfo()
-                has_data = any([v for v in mask.values() if v is not None and v > 0])
-                if not has_data:
-                    log(f"Sentinel celda {grid_id} T2 sin datos, no se exporta PNG", "warning")
-                else:
-                    geemap.download_ee_image(
-                        image=img,
-                        filename=str(sent_t2_png),
-                        region=ee_geom,
-                        scale=10,
-                        crs="EPSG:4326",
-                        dtype="uint16"
-                    )
-                    if sent_t2_png.exists() and sent_t2_png.stat().st_size > 100:
-                        try:
-                            with Image.open(sent_t2_png) as im:
-                                im.verify()
-                            log(f"Sentinel celda {grid_id} T2 PNG guardada", "success")
-                        except Exception as e:
-                            log(f"Sentinel celda {grid_id} T2 PNG corrupta: {e}", "error")
-                            sent_t2_png.unlink()
-                    else:
-                        log(f"Sentinel celda {grid_id} T2 PNG vacía, se elimina", "warning")
-                        if sent_t2_png.exists():
-                            sent_t2_png.unlink()
-            except Exception as e:
-                log(f"Error Sentinel celda {grid_id} T2: {e}", "error")
-        # Dynamic World periodo anterior (t1)
-        dw_t1_png = dw_dir / f"dw_grid_{grid_id}_{date_before}.png"
-        if not dw_t1_png.exists():
-            try:
-                vis_params = {
-                    "min": 0,
-                    "max": 8,
-                    "palette": [
-                        "#419BDF", "#397D49", "#88B053", "#7A87C6",
-                        "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
-                    ]
-                }
-                dw_img = dw_before.clip(ee_geom)
-                mask = dw_img.mask().reduceRegion(
-                    reducer=ee.Reducer.sum(),
-                    geometry=ee_geom,
-                    scale=10,
-                    maxPixels=1e8
-                ).getInfo()
-                has_data = any([v for v in mask.values() if v is not None and v > 0])
-                if not has_data:
-                    log(f"DW celda {grid_id} T1 sin datos, no se exporta PNG", "warning")
-                else:
-                    dw_t1 = dw_img.visualize(**vis_params)
-                    geemap.download_ee_image(
-                        image=dw_t1,
-                        filename=str(dw_t1_png),
-                        region=ee_geom,
-                        scale=10,
-                        crs="EPSG:4326",
-                        dtype="uint8"
-                    )
-                    if dw_t1_png.exists() and dw_t1_png.stat().st_size > 100:
-                        try:
-                            with Image.open(dw_t1_png) as im:
-                                im.verify()
-                            log(f"DW celda {grid_id} T1 PNG guardada", "success")
-                        except Exception as e:
-                            log(f"DW celda {grid_id} T1 PNG corrupta: {e}", "error")
-                            dw_t1_png.unlink()
-                    else:
-                        log(f"DW celda {grid_id} T1 PNG vacía, se elimina", "warning")
-                        if dw_t1_png.exists():
-                            dw_t1_png.unlink()
-            except Exception as e:
-                log(f"Error DW celda {grid_id} T1: {e}", "error")
-        # Dynamic World periodo actual (t2)
-        dw_t2_png = dw_dir / f"dw_grid_{grid_id}_{current_date}.png"
-        if not dw_t2_png.exists():
-            try:
-                vis_params = {
-                    "min": 0,
-                    "max": 8,
-                    "palette": [
-                        "#419BDF", "#397D49", "#88B053", "#7A87C6",
-                        "#E49635", "#DFC35A", "#C4281B", "#A59B8F", "#B39FE1"
-                    ]
-                }
-                dw_img = dw_current.clip(ee_geom)
-                mask = dw_img.mask().reduceRegion(
-                    reducer=ee.Reducer.sum(),
-                    geometry=ee_geom,
-                    scale=10,
-                    maxPixels=1e8
-                ).getInfo()
-                has_data = any([v for v in mask.values() if v is not None and v > 0])
-                if not has_data:
-                    log(f"DW celda {grid_id} T2 sin datos, no se exporta PNG", "warning")
-                else:
-                    dw_t2 = dw_img.visualize(**vis_params)
-                    geemap.download_ee_image(
-                        image=dw_t2,
-                        filename=str(dw_t2_png),
-                        region=ee_geom,
-                        scale=10,
-                        crs="EPSG:4326",
-                        dtype="uint8"
-                    )
-                    if dw_t2_png.exists() and dw_t2_png.stat().st_size > 100:
-                        try:
-                            with Image.open(dw_t2_png) as im:
-                                im.verify()
-                            log(f"DW celda {grid_id} T2 PNG guardada", "success")
-                        except Exception as e:
-                            log(f"DW celda {grid_id} T2 PNG corrupta: {e}", "error")
-                            dw_t2_png.unlink()
-                    else:
-                        log(f"DW celda {grid_id} T2 PNG vacía, se elimina", "warning")
-                        if dw_t2_png.exists():
-                            dw_t2_png.unlink()
-            except Exception as e:
-                log(f"Error DW celda {grid_id} T2: {e}", "error")
+                        png_file.unlink(missing_ok=True)
+                except Exception as e:
+                    pass
+            else:
+                png_count_dw += 1
+        
+        # Sentinel T1 y T2
+        for png_file, date_str in [
+            (sentinel_dir / f"sentinel_grid_{grid_id}_{date_before}.png", date_before),
+            (sentinel_dir / f"sentinel_grid_{grid_id}_{current_date}.png", current_date)
+        ]:
+            if not png_file.exists():
+                try:
+                    date_start = ee.Date(date_str).advance(-lookback_days, "day")
+                    date_end = ee.Date(date_str).advance(1, "day")
+                    col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
+                        .filterDate(date_start, date_end) \
+                        .filterBounds(ee_geom) \
+                        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30)) \
+                        .select(["B4", "B3", "B2"])
+                    if col.size().getInfo() > 0:
+                        img = col.median().clip(ee_geom)
+                        # Aplicar visualización para RGB natural: escalar uint16 a uint8
+                        # Sentinel-2 SR: valores típicos 0-3000, escalamos a 0-255
+                        vis_params = {"min": 0, "max": 3000, "bands": ["B4", "B3", "B2"]}
+                        img_viz = img.visualize(**vis_params)
+                        geemap.download_ee_image(image=img_viz, filename=str(png_file), region=ee_geom, scale=10, crs="EPSG:4326", dtype="uint8")
+                        if png_file.exists() and png_file.stat().st_size > 1000:
+                            Image.open(png_file).verify()
+                            make_nas_transparent(str(png_file), 'sentinel')
+                            png_count_sentinel += 1
+                        else:
+                            png_file.unlink(missing_ok=True)
+                except Exception as e:
+                    pass
+            else:
+                png_count_sentinel += 1
+    
+    log(f"PNGs: DW={png_count_dw}, Sentinel={png_count_sentinel}", "success")
+    
+    # === PASO 2: GENERAR MAPAS INTERACTIVOS ===
+    log("\n[2/3] Generando HTMLs...", "info")
+    
+    alert_grid_ids = None
+    if df_transitions is not None and not df_transitions.empty:
+        mask = (df_transitions["pct_1_a_otro_clase1"] >= threshold_pct) | (df_transitions["pct_5_a_otro_no1_clase5"] >= threshold_pct)
+        alert_grid_ids = df_transitions[mask]["grid_id"].tolist()
+    
+    for tipo, output_file in [("dw", "dw_mes.html"), ("sentinel", "sentinel_mes.html")]:
+        try:
+            log(f"  Intentando generar {output_file}...", "info")
+            generar_mapa_png(
+                paramo=aoi_name if aoi_name else "paramo",
+                periodo=current_date,
+                tipo=tipo,
+                grilla_path=Path(grid_path),
+                imagenes_dir=Path(map_dir) / "imagenes",
+                output_html=Path(map_dir) / output_file,
+                alert_grid_ids=alert_grid_ids
+            )
+            log(f"  OK: {output_file}", "success")
+        except Exception as e:
+            log(f"  ERROR {output_file}: {str(e)[:200]}", "error")
+            import traceback
+            tb = traceback.format_exc()
+            log(f"  Traceback: {tb[:500]}", "error")
 
-    """
-    Genera mapas interactivos y exporta imágenes PNG de Sentinel y Dynamic World.
-    Devuelve rutas de HTML y PNG.
-    """
-    log("Generando mapas interactivos y PNG...", "info")
-
-    # Obtener bounds del AOI
-    aoi = gpd.read_file(aoi_path).to_crs(epsg=4326)
-    minx, miny, maxx, maxy = aoi.total_bounds
-    bounds = [[miny, minx], [maxy, maxx]]
-
-    # Mapas interactivos usando overlays por grilla (se generan con png_map.py)
-    # Aquí solo devolvemos las rutas esperadas para el reporte
-    mapas_dir = Path(map_dir)
-    log("Mapas interactivos y PNG listos.", "success")
+    
+    log("="*70 + "\n", "info")
+    
     return {
-        "MAPA_SENTINEL_INTERACTIVO": str(mapas_dir / "sentinel_mes.html"),
-        "MAPA_DW_INTERACTIVO": str(mapas_dir / "dw_mes.html"),
-        "IMG_SENTINEL_PNG_DIR": str(mapas_dir / "imagenes" / "sentinel"),
-        "IMG_DW_PNG_DIR": str(mapas_dir / "imagenes" / "dw")
+        "MAPA_SENTINEL_INTERACTIVO": str(Path(map_dir) / "sentinel_mes.html"),
+        "MAPA_DW_INTERACTIVO": str(Path(map_dir) / "dw_mes.html"),
+        "IMG_SENTINEL_PNG_DIR": str(sentinel_dir),
+        "IMG_DW_PNG_DIR": str(dw_dir)
     }

@@ -4,7 +4,7 @@ import ee
 import geemap
 from shapely.ops import unary_union
 from src.aux_utils import log
-from src.config import LOOKBACK_DAYS, PROJECT_ID
+from src.config import LOOKBACK_DAYS, PROJECT_ID, ALERT_MIN_THRESHOLD_PCT, ALERT_TOP_N_GRIDS, ALERT_COMBINE_METRICS
 
 def authenticate_gee():
     try:
@@ -127,7 +127,64 @@ def compute_transitions(dw_before, dw_current, grid_path):
     log(f"✅ Transiciones calculadas: {len(df)} celdas procesadas.", "success")
     return df
 
-def download_sentinel_rgb_period(aoi_path, start_date, end_date, output_tif):
+def get_alert_grids(df_transitions, aoi_name, min_threshold=None, top_n=None, combine_metrics=None):
+    """
+    Filtra grillas para alertar basado en enfoque híbrido:
+    - Selecciona los top N grillas que superen el umbral mínimo de cambio
+    - Siempre retorna todas las grillas para 'paramo_altiplano' (caso especial)
+    
+    Args:
+        df_transitions: DataFrame con columnas pct_1_a_otro_clase1 y pct_5_a_otro_no1_clase5
+        aoi_name: nombre del AOI (ej: 'paramo_chingaza')
+        min_threshold: porcentaje mínimo (ej: 15.0%). Si None, usa config
+        top_n: número de top grillas a retornar (ej: 5). Si None, usa config
+        combine_metrics: si True, combina ambas métricas. Si None, usa config
+    
+    Returns:
+        pd.DataFrame: grillas seleccionadas (subset del df original)
+        list: grid_ids de las grillas alertadas
+    """
+    min_threshold = min_threshold or ALERT_MIN_THRESHOLD_PCT
+    top_n = top_n or ALERT_TOP_N_GRIDS
+    combine_metrics = combine_metrics if combine_metrics is not None else ALERT_COMBINE_METRICS
+    
+    # Caso especial: Altiplano siempre alertar todas las grillas
+    if "altiplano" in aoi_name.lower():
+        log(f"📍 {aoi_name}: Generando mapas para TODAS las grillas (caso especial Altiplano)", "info")
+        return df_transitions, df_transitions["grid_id"].tolist()
+    
+    # Para otros páramos: enfoque híbrido
+    if df_transitions.empty:
+        log(f"⚠️ {aoi_name}: Sin datos de transiciones", "warning")
+        return pd.DataFrame(), []
+    
+    # Combinar métricas en un score único
+    if combine_metrics:
+        # Usar el máximo de ambas métricas como indicador de severidad
+        df_transitions["alert_score"] = df_transitions[["pct_1_a_otro_clase1", "pct_5_a_otro_no1_clase5"]].max(axis=1)
+    else:
+        # Usar solo cambio de bosques
+        df_transitions["alert_score"] = df_transitions["pct_1_a_otro_clase1"]
+    
+    # Filtrar por umbral mínimo
+    df_above_threshold = df_transitions[df_transitions["alert_score"] >= min_threshold].copy()
+    
+    if df_above_threshold.empty:
+        log(f"⚠️ {aoi_name}: No hay grillas por encima del umbral {min_threshold}%", "warning")
+        # Si no hay grillas sobre el umbral, retornar vacío (no alertar)
+        return pd.DataFrame(), []
+    
+    # Seleccionar top N sobre el umbral
+    alert_grids = df_above_threshold.nlargest(top_n, "alert_score")
+    alert_grid_ids = alert_grids["grid_id"].tolist()
+    
+    log(
+        f"🚨 {aoi_name}: {len(alert_grids)} grillas alertadas (top {len(alert_grids)}/{top_n} > {min_threshold}%)\n"
+        f"   Grillas: {alert_grid_ids}",
+        "warning"
+    )
+    
+    return alert_grids, alert_grid_ids
     authenticate_gee()
     gdf = gpd.read_file(aoi_path)
     minx, miny, maxx, maxy = gdf.total_bounds

@@ -3,13 +3,12 @@ import argparse
 import os
 import shutil
 from pathlib import Path
-from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX, get_paramo_geojson
-from src.dw_utils import get_dynamic_world_image, compute_transitions
+from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX, get_paramo_geojson, download_altiplano_aoi_from_gcs
+from src.dw_utils import get_dynamic_world_image, compute_transitions, get_alert_grids
 from src.maps_utils import generate_maps
 from src.reports.render_report import render
 from src.aux_utils import log, save_json, create_grid
 from src.gcs_utils import upload_directory_to_gcs, upload_file_to_gcs, get_public_url, image_to_base64
-from src.png_map import generar_mapa_png
 from datetime import datetime
 import locale
 import gcsfs
@@ -112,46 +111,15 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         month_str,      
         LOOKBACK_DAYS,
         dw_before=dw_before,
-        dw_current=dw_current
+        dw_current=dw_current,
+        df_transitions=df_trans,
+        aoi_name=aoi_name  # Pasar nombre del AOI para lógica de Altiplano
     )
-    # Generar mapas interactivos con overlays PNG (DW y Sentinel) usando la nueva estructura
-    try:
-        # DW
-        generar_mapa_png(
-            paramo=aoi_name,
-            periodo=current_date,
-            tipo="dw",
-            grilla_path=Path(grid_path),
-            imagenes_dir=Path(paths["mapas"]) / "imagenes",
-            output_html=Path(paths["mapas"]) / "dw_mes.html"
-        )
-        # Sentinel
-        generar_mapa_png(
-            paramo=aoi_name,
-            periodo=current_date,
-            tipo="sentinel",
-            grilla_path=Path(grid_path),
-            imagenes_dir=Path(paths["mapas"]) / "imagenes",
-            output_html=Path(paths["mapas"]) / "sentinel_mes.html"
-        )
-        # Si la grilla está vacía, también intentar generar overlays sobre el AOI base
-        if gdf_grid.empty:
-            for tipo in ["dw", "sentinel"]:
-                for periodo_x, html_name in zip([current_date, f"{int(current_date[:4])-1}-{current_date[5:]}"], ["dw_mes.html", "sentinel_mes.html"]):
-                    from pathlib import Path
-                    imagenes_dir = Path(paths["mapas"]) / "imagenes"
-                    aoi_geojson = Path(paths["grilla"]) / f"{aoi_name}.geojson"
-                    if tipo == "dw":
-                        img_dir = imagenes_dir / "dw"
-                        png_filename = f"dw_aoi_{periodo_x}.png"
-                    else:
-                        img_dir = imagenes_dir / "sentinel"
-                        png_filename = f"sentinel_aoi_{periodo_x}.png"
-                    png_path = img_dir / png_filename
-                    if not png_path.exists() and aoi_geojson.exists():
-                        log(f"[INFO] Falta PNG para AOI {aoi_name} periodo {periodo_x} tipo {tipo}. Debes generarlo manualmente o automatizar la exportación.", "warning")
-    except Exception as e:
-        log(f"[ERROR] No se pudo generar el mapa interactivo PNG para {aoi_name}: {e}", "error")
+    
+    # === Seleccionar grillas para alertar (enfoque híbrido) ===
+    alert_grids_df, alert_grid_ids = get_alert_grids(df_trans, aoi_name)
+    
+    # Los mapas interactivos ya se generan dentro de generate_maps() con los overlays PNG
 
     # Si está habilitado GCS, subir archivos
     if USE_GCS:
@@ -223,6 +191,14 @@ if __name__ == "__main__":
         print(f"[INFO] Limpiando carpeta del periodo: {period_dir}")
         shutil.rmtree(period_dir, onerror=on_rm_error)
     os.makedirs(period_dir, exist_ok=True)
+
+    # Descargar AOI de Altiplano desde GCS y guardarlo en la estructura local
+    try:
+        log("📥 Descargando AOI Altiplano desde GCS...", "info")
+        download_altiplano_aoi_from_gcs(OUTPUTS_BASE, args.anio, args.mes)
+    except Exception as e:
+        log(f"[WARN] No se pudo descargar AOI Altiplano: {e}", "warning")
+        log("⏭️ Continuando sin Altiplano...", "warning")
 
     # Listar archivos GeoJSON desde GCS o local
     # Listar nombres base de páramos (sin extensión)
