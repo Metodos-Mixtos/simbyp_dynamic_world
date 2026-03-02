@@ -44,7 +44,7 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
     └── sentinel_mes.html
     """
     import shapely
-    from src.png_map import generar_mapa_png
+    from src.png_map import generar_mapa_png, get_file_grid_id
     
     log("="*70, "info")
     log(f"GENERANDO MAPAS: {aoi_name}", "info")
@@ -91,6 +91,9 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
         if grid_id not in grids_to_process:
             continue
         
+        # Remapear grid_id si es Altiplano (0 → 1) para nombres de archivo
+        file_grid_id = get_file_grid_id(grid_id, aoi_name)
+        
         geom = row.geometry
         if geom.is_empty or geom.geom_type not in ["Polygon", "MultiPolygon"]:
             continue
@@ -103,8 +106,8 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
         
         # DW T1 y T2
         for png_file, date_str, img_source in [
-            (dw_dir / f"dw_grid_{grid_id}_{date_before}.png", date_before, dw_before),
-            (dw_dir / f"dw_grid_{grid_id}_{current_date}.png", current_date, dw_current)
+            (dw_dir / f"dw_grid_{file_grid_id}_{date_before}.png", date_before, dw_before),
+            (dw_dir / f"dw_grid_{file_grid_id}_{current_date}.png", current_date, dw_current)
         ]:
             if not png_file.exists():
                 try:
@@ -124,8 +127,8 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
         
         # Sentinel T1 y T2
         for png_file, date_str in [
-            (sentinel_dir / f"sentinel_grid_{grid_id}_{date_before}.png", date_before),
-            (sentinel_dir / f"sentinel_grid_{grid_id}_{current_date}.png", current_date)
+            (sentinel_dir / f"sentinel_grid_{file_grid_id}_{date_before}.png", date_before),
+            (sentinel_dir / f"sentinel_grid_{file_grid_id}_{current_date}.png", current_date)
         ]:
             if not png_file.exists():
                 try:

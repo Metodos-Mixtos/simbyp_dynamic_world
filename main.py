@@ -6,6 +6,7 @@ from pathlib import Path
 from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX, get_paramo_geojson, download_altiplano_aoi_from_gcs
 from src.dw_utils import get_dynamic_world_image, compute_transitions, get_alert_grids
 from src.maps_utils import generate_maps
+from src.png_map import get_display_grid_id
 from src.reports.render_report import render
 from src.aux_utils import log, save_json, create_grid
 from src.gcs_utils import upload_directory_to_gcs, upload_file_to_gcs, get_public_url, image_to_base64
@@ -79,7 +80,9 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         # Grilla con mayor pérdida de bosque
     if total_perdida_bosque > 0:
         fila_bosque_max = df_trans.loc[df_trans["n_1_a_otro"].idxmax()]
-        grilla_max_bosque = int(fila_bosque_max["grid_id"])
+        grid_id_bosque = int(fila_bosque_max["grid_id"])
+        # Remapear grid_id si es Altiplano (0 → 1)
+        grilla_max_bosque = get_display_grid_id(grid_id_bosque, aoi_name)
         perdida_bosque_max = round(fila_bosque_max["n_1_a_otro"] * 0.01, 2)
     else:
         grilla_max_bosque, perdida_bosque_max = None, 0
@@ -87,7 +90,9 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         # Grilla con mayor cambio de matorral
     if total_perdida_matorral > 0:
         fila_mat_max = df_trans.loc[df_trans["n_5_a_otro_no1"].idxmax()]
-        grilla_max_mat = int(fila_mat_max["grid_id"])
+        grid_id_mat = int(fila_mat_max["grid_id"])
+        # Remapear grid_id si es Altiplano (0 → 1)
+        grilla_max_mat = get_display_grid_id(grid_id_mat, aoi_name)
         perdida_mat_max = round(fila_mat_max["n_5_a_otro_no1"] * 0.01, 2)
     else:
         grilla_max_mat, perdida_mat_max = None, 0
