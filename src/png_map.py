@@ -376,17 +376,6 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
     centroid = grid_gdf.unary_union.centroid
     m = folium.Map(location=[centroid.y, centroid.x], zoom_start=10, tiles="CartoDB positron")
     
-    # Para Altiplano, aplicar zoom automático al AOI/grilla desde el inicio
-    if paramo and 'altiplano' in paramo.lower():
-        try:
-            print(f"[DEBUG] Detectado Altiplano, aplicando fit_bounds...")
-            bounds = grid_gdf.total_bounds
-            print(f"[DEBUG] Bounds de Altiplano: {bounds}")
-            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]], padding=(0.1, 0.1))
-            print(f"[DEBUG] ✓ Zoom de Altiplano aplicado")
-        except Exception as e:
-            print(f"[DEBUG] Error al hacer zoom de Altiplano: {e}")
-    
     # Períodos
     periodo_actual = periodo
     periodo_anterior = f"{int(periodo[:4])-1}-{periodo[5:]}"
@@ -477,12 +466,22 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
     # QUINTO: Agregar números de grillas (con remapeo para Altiplano)
     add_grid_labels(m, grid_gdf, paramo=paramo)
     
-    # SEXTO: Agregar Layer Control
+    # SEXTO: Si es altiplano, hacer zoom automático al polígono
+    # SÉPTIMO: Aplicar fit_bounds FINAL para Altiplano (después de agregar todos los elementos)
+    # Esto asegura que sea la última operación antes de guardar
+    if paramo and 'altiplano' in paramo.lower():
+        try:
+            bounds = grid_gdf.total_bounds
+            m.fit_bounds([[bounds[1], bounds[0]], [bounds[3], bounds[2]]], padding=(0.1, 0.1))
+            print(f"[DEBUG] ✓ Zoom final de Altiplano aplicado antes de guardar")
+        except Exception as e:
+            print(f"[DEBUG] Error aplicando zoom final: {e}")
+    
     folium.LayerControl(collapsed=False).add_to(m)
     m.save(str(output_html))
     print(f"Mapa guardado en: {output_html}")
     
-    # SÉPTIMO: Procesar todos los PNGs (convertir a RGBA, hacer transparentes negros para DW)
+    # OCTAVO: Procesar todos los PNGs (convertir a RGBA, hacer transparentes negros para DW)
     mapas_parent = Path(output_html).parent
     fix_all_pngs(mapas_parent)
     
