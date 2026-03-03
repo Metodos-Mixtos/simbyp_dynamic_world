@@ -185,24 +185,122 @@ def get_alert_grids(df_transitions, aoi_name, min_threshold=None, top_n=None, co
     )
     
     return alert_grids, alert_grid_ids
-    authenticate_gee()
-    gdf = gpd.read_file(aoi_path)
-    minx, miny, maxx, maxy = gdf.total_bounds
-    bbox = ee.Geometry.BBox(minx, miny, maxx, maxy)
 
-    collection = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(start_date, end_date)
-        .filterBounds(bbox)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30))
-        .select(["B4", "B3", "B2"])
-    )
 
-    image = collection.median().clip(bbox)
-    log(f"Descargando Sentinel-2 RGB {start_date}–{end_date}", "info")
+def compute_coverage_distribution(dw_before, dw_current, grid_path):
+    """
+    Calcula la distribución de clases (0-8) de Dynamic World para cada grilla en t1 y t2.
+    
+    Dynamic World clases:
+      0: Water, 1: Trees, 2: Grass, 3: Shrub, 4: Herbaceous, 5: Crops, 6: Built, 7: Bare, 8: Snow
+    
+    Devuelve un DataFrame con porcentaje de cada clase por grilla:
+      grid_id, class_0_t1, class_1_t1, ..., class_8_t1,
+               class_0_t2, class_1_t2, ..., class_8_t2
+    """
+    grid_gdf = gpd.read_file(grid_path).to_crs(epsg=4326)
+    results = []
+    
+    # Crear bandas para cada clase en t1 y t2
+    dw_images = {}
+    for class_num in range(9):
+        dw_images[f"class_{class_num}_t1"] = dw_before.eq(class_num).rename(f"class_{class_num}_t1")
+        dw_images[f"class_{class_num}_t2"] = dw_current.eq(class_num).rename(f"class_{class_num}_t2")
+    
+    # Combinar todas las bandas
+    img_all = None
+    for band_name, band in dw_images.items():
+        if img_all is None:
+            img_all = band
+        else:
+            img_all = img_all.addBands(band)
+    
+    # Iterar sobre cada celda de la grilla
+    for _, row in grid_gdf.iterrows():
+        geom = row.geometry
+        if geom.is_empty:
+            continue
+        if geom.geom_type == "MultiPolygon":
+            geom = unary_union([p for p in geom.geoms if not p.is_empty])
+        
+        ee_geom = ee.Geometry(geom.__geo_interface__)
+        grid_id = row.get("grid_id", _)
+        
+        try:
+            # Contar píxeles válidos
+            count_valid = dw_before.reduceRegion(
+                reducer=ee.Reducer.count(),
+                geometry=ee_geom,
+                scale=10,
+                maxPixels=1e13
+            ).getInfo()
+            
+            if not count_valid:
+                log(f"⚠️ Grid {grid_id} sin píxeles válidos (fue omitida).", "warning")
+                continue
+            
+            # Reducir regiones (sumar píxeles por clase)
+            stats = img_all.reduceRegion(
+                reducer=ee.Reducer.sum(),
+                geometry=ee_geom,
+                scale=10,
+                maxPixels=1e13
+            ).getInfo() or {}
+            
+            # Extraer porcentajes
+            result_row = {"grid_id": grid_id}
+            n_total_t1 = sum(stats.get(f"class_{i}_t1", 0) for i in range(9))
+            n_total_t2 = sum(stats.get(f"class_{i}_t2", 0) for i in range(9))
+            
+            # Porcentajes por clase en t1
+            for class_num in range(9):
+                n_class_t1 = stats.get(f"class_{class_num}_t1", 0)
+                pct_t1 = 100 * n_class_t1 / n_total_t1 if n_total_t1 > 0 else 0
+                result_row[f"class_{class_num}_t1_pct"] = round(pct_t1, 2)
+            
+            # Porcentajes por clase en t2
+            for class_num in range(9):
+                n_class_t2 = stats.get(f"class_{class_num}_t2", 0)
+                pct_t2 = 100 * n_class_t2 / n_total_t2 if n_total_t2 > 0 else 0
+                result_row[f"class_{class_num}_t2_pct"] = round(pct_t2, 2)
+            
+        except Exception as e:
+            log(f"⚠️ Error en grid {grid_id}: {e}", "warning")
+            result_row = {"grid_id": grid_id}
+            for class_num in range(9):
+                result_row[f"class_{class_num}_t1_pct"] = 0
+                result_row[f"class_{class_num}_t2_pct"] = 0
+        
+        results.append(result_row)
+    
+    df = pd.DataFrame(results)
+    log(f"✅ Cobertura calculada: {len(df)} celdas procesadas.", "success")
+    return df
 
-    geemap.download_ee_image(
-        image=image, filename=output_tif,
-        region=bbox, scale=10, crs="EPSG:4326", dtype="uint16"
-    )
-    log(f"Imagen Sentinel-2 guardada en {output_tif}", "success")
+
+
+
+def generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current_date, output_path):
+    """
+    Genera CSV con distribución de clases (0-8) de Dynamic World por grilla en t1 y t2.
+    
+    Columnas:
+      - grid_id
+      - Porcentaje de cada clase (0-8) en t1 y t2
+    
+    Args:
+        dw_before, dw_current: Imágenes de Dynamic World (EE Image)
+        grid_path: Ruta al GeoJSON de grilla
+        date_before, current_date: Fechas en formato 'YYYY-MM-DD' (no se usan)
+        output_path: Ruta donde guardar el CSV
+    """
+    # Calcular distribuciones de clase
+    df_coverage = compute_coverage_distribution(dw_before, dw_current, grid_path)
+    
+    # Guardar
+    import os
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    df_coverage.to_csv(output_path, index=False)
+    
+    log(f"✅ CSV de coberturas guardado: {output_path}", "success")
+    return df_coverage

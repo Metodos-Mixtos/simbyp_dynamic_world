@@ -14,7 +14,7 @@ from PIL import Image
 
 
 # ============================================================================
-# FUNCIONES DE PROCESAMIENTO DE PNGs (migradas de png_per_grid.py)
+# FUNCIONES DE PROCESAMIENTO DE PNGs
 # ============================================================================
 
 def fix_png(img_path, paramo=None):
@@ -140,7 +140,7 @@ def add_dw_legend(m):
     """
     legend_html = '''
     <div style="position: fixed; 
-                bottom: 50px; right: 10px; width: 240px; height: auto; 
+                bottom: 50px; left: 10px; width: 240px; height: auto; 
                 background-color: white; border:2px solid grey; z-index:9999; 
                 font-size:13px; padding: 10px; border-radius: 5px;
                 font-family: Arial, sans-serif;">

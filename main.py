@@ -4,7 +4,7 @@ import os
 import shutil
 from pathlib import Path
 from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX, get_paramo_geojson, download_altiplano_aoi_from_gcs
-from src.dw_utils import get_dynamic_world_image, compute_transitions, get_alert_grids
+from src.dw_utils import get_dynamic_world_image, compute_transitions, get_alert_grids, generate_coverage_csv
 from src.maps_utils import generate_maps
 from src.png_map import get_display_grid_id
 from src.reports.render_report import render
@@ -100,6 +100,13 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
     # Guardar transiciones a CSV
     csv_path = os.path.join(paths["comparacion"], f"{aoi_name}_transiciones.csv")
     df_trans.to_csv(csv_path, index=False)
+    
+    # Generar CSV de coberturas (clases DW en t1 y t2, índices de Sentinel)
+    csv_coverage_path = os.path.join(paths["comparacion"], f"{aoi_name}_coberturas.csv")
+    try:
+        generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current_date, csv_coverage_path)
+    except Exception as e:
+        log(f"⚠️ Error generando CSV de coberturas para {aoi_name}: {e}", "warning")
 
     #sentinel_tif = os.path.join(paths["imagenes"], f"sentinel_rgb_{date_before}_a_{current_date}.tif")
     #if not os.path.exists(sentinel_tif):
