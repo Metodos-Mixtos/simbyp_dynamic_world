@@ -283,11 +283,13 @@ def compute_coverage_distribution(dw_before, dw_current, grid_path):
 def generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current_date, output_path):
     """
     Genera CSV con distribución de clases (0-8) de Dynamic World por grilla en t1 y t2.
-    
+
     Columnas:
       - grid_id
       - Porcentaje de cada clase (0-8) en t1 y t2
-    
+      - Suma de todas las categorías en t1 y t2
+      - Diferencia entre coberturas en t1 y t2 para cada clase
+
     Args:
         dw_before, dw_current: Imágenes de Dynamic World (EE Image)
         grid_path: Ruta al GeoJSON de grilla
@@ -296,11 +298,20 @@ def generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current
     """
     # Calcular distribuciones de clase
     df_coverage = compute_coverage_distribution(dw_before, dw_current, grid_path)
-    
+
+    # Calcular suma de todas las categorías en t1 y t2
+    df_coverage["sum_t1"] = df_coverage[[f"class_{i}_t1_pct" for i in range(9)]].sum(axis=1)
+    df_coverage["sum_t2"] = df_coverage[[f"class_{i}_t2_pct" for i in range(9)]].sum(axis=1)
+
+    # Calcular diferencias entre coberturas en t1 y t2 para cada clase
+    for class_num in range(9):
+        class_name = f"class_{class_num}"
+        df_coverage[f"pp_{class_name}"] = df_coverage[f"{class_name}_t2_pct"] - df_coverage[f"{class_name}_t1_pct"]
+
     # Guardar
     import os
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     df_coverage.to_csv(output_path, index=False)
-    
+
     log(f"✅ CSV de coberturas guardado: {output_path}", "success")
     return df_coverage
