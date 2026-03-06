@@ -12,7 +12,7 @@ import os
 import pandas as pd
 from pathlib import Path
 import json
-from src.config import PROJECT_ID
+from src.config import PROJECT_ID, ALERT_THRESHOLD_PP
 from PIL import Image
 import numpy as np
 
@@ -33,7 +33,10 @@ def make_nas_transparent(png_path, image_type='sentinel'):
 def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current, df_transitions=None, aoi_name=None):
     """
     Pipeline COMPLETO:
-    1. Genera PNGs de DW y Sentinel con threshold 15%
+    1. Genera PNGs de DW y Sentinel para grillas con alertas según CSV de coberturas
+       - Alerta si pp_class_1 (árboles) disminuye más de ALERT_THRESHOLD_PP
+       - Alerta si pp_class_5 (arbustos/matorrales) disminuye más de ALERT_THRESHOLD_PP 
+         Y el aumento de árboles no compensa esa pérdida (evita transiciones 5→1)
     2. Genera HTMLs interactivos (dw_mes.html, sentinel_mes.html)
     
     Estructura en map_dir:
@@ -66,20 +69,41 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
     dw_dir.mkdir(parents=True, exist_ok=True)
     sentinel_dir.mkdir(parents=True, exist_ok=True)
     
-    # Determinar qué grillas procesar (threshold 15%)
-    threshold_pct = 15.0
+    # Determinar qué grillas procesar usando CSV de coberturas (no transiciones)
+    threshold_pct = ALERT_THRESHOLD_PP
     grids_to_process = set()
+    
+    # Leer CSV de coberturas para determinar alertas
+    coverage_csv_path = Path(map_dir).parent / "comparacion" / f"{aoi_name}_coberturas.csv"
     
     if aoi_name and "altiplano" in aoi_name.lower():
         grids_to_process = set(grid_gdf["grid_id"].tolist())
         log(f"Altiplano: TODAS {len(grid_gdf)} grillas", "info")
-    elif df_transitions is not None and not df_transitions.empty:
-        mask = (df_transitions["pct_1_a_otro_clase1"] >= threshold_pct) | (df_transitions["pct_5_a_otro_no1_clase5"] >= threshold_pct)
-        grids_to_process = set(df_transitions[mask]["grid_id"].tolist())
-        log(f"Filtro >15%: {len(grids_to_process)}/{len(grid_gdf)} grillas", "info")
+    elif coverage_csv_path.exists():
+        try:
+            df_coverage = pd.read_csv(coverage_csv_path)
+            # Criterios de alerta:
+            # 1. Clase 1 (árboles) disminuye más del umbral
+            # 2. Clase 5 (arbustos/matorrales) disminuye más del umbral Y el aumento de clase 1 no compensa esa pérdida
+            #    Esto evita alertar por transiciones naturales 5→1 (arbustos→árboles)
+            alerta_clase_1 = df_coverage["pp_class_1"] < -threshold_pct
+            alerta_clase_5 = (df_coverage["pp_class_5"] < -threshold_pct) & (df_coverage["pp_class_1"] < -df_coverage["pp_class_5"])
+            
+            mask = alerta_clase_1 | alerta_clase_5
+            grids_to_process = set(df_coverage[mask]["grid_id"].tolist())
+            
+            n_alerta_bosque = alerta_clase_1.sum()
+            n_alerta_arbustos = alerta_clase_5.sum()
+            log(f"Filtro coberturas (disminución >{threshold_pct}pp): {len(grids_to_process)}/{len(grid_gdf)} grillas", "info")
+            log(f"  - Alertas árboles (clase 1): {n_alerta_bosque}", "info")
+            log(f"  - Alertas arbustos/matorrales (clase 5, pérdida neta): {n_alerta_arbustos}", "info")
+        except Exception as e:
+            log(f"⚠️ Error leyendo CSV coberturas, usando todas las grillas: {e}", "warning")
+            grids_to_process = set(grid_gdf["grid_id"].tolist())
     else:
+        # Fallback: usar todas las grillas si no hay CSV de coberturas
         grids_to_process = set(grid_gdf["grid_id"].tolist())
-        log(f"Sin filtro: TODAS {len(grids_to_process)} grillas", "warning")
+        log(f"Sin CSV coberturas: TODAS {len(grids_to_process)} grillas", "warning")
     
     # === PASO 1: GENERAR PNGs ===
     log("\n[1/3] Generando PNGs...", "info")
@@ -162,10 +186,8 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
     # === PASO 2: GENERAR MAPAS INTERACTIVOS ===
     log("\n[2/3] Generando HTMLs...", "info")
     
-    alert_grid_ids = None
-    if df_transitions is not None and not df_transitions.empty:
-        mask = (df_transitions["pct_1_a_otro_clase1"] >= threshold_pct) | (df_transitions["pct_5_a_otro_no1_clase5"] >= threshold_pct)
-        alert_grid_ids = df_transitions[mask]["grid_id"].tolist()
+    # Usar las mismas grillas procesadas como alert_grid_ids (basado en coberturas)
+    alert_grid_ids = list(grids_to_process) if grids_to_process else None
     
     for tipo, output_file in [("dw", "dw_mes.html"), ("sentinel", "sentinel_mes.html")]:
         try:

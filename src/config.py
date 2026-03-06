@@ -30,7 +30,7 @@ PROJECT_ID = os.getenv("GCP_PROJECT")
 
 # === Configuración de alertas por cambios de cobertura ===
 # Enfoque híbrido: seleccionar los TOP N grillas que superen el umbral mínimo
-ALERT_MIN_THRESHOLD_PCT = 15.0  # Porcentaje mínimo de cambio para considerar alerta (ej: 15%)
+ALERT_THRESHOLD_PP = 1 # Umbral en puntos porcentuales para alertas (clase 1: árboles, clase 5: arbustos/matorrales)
 ALERT_TOP_N_GRIDS = 5  # Cuántas grillas alertar como máximo (ej: top 5)
 ALERT_COMBINE_METRICS = True  # Si es True, combina pct_1_a_otro_clase1 y pct_5_a_otro_no1_clase5
 # Special case: Altiplano siempre genera mapas (solo tiene 1 grilla)

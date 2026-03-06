@@ -191,7 +191,7 @@ def add_grid_labels(m, grid_gdf, paramo=None):
 
 from datetime import datetime
 
-def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=None, alert_grid_ids=None, html_parent_path=None):
+def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=None, alert_grid_ids=None, html_parent_path=None, opacity=1.0):
     """
     Agrega overlays PNG SOLO para grillas alertadas a un mapa Folium.
     Usa rutas RELATIVAS para que funcione tanto localmente como en GCS.
@@ -206,6 +206,7 @@ def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=N
         paramo: nombre del páramo (para remapeo de grid_id en Altiplano)
         alert_grid_ids: lista de grid_ids alerted (SOLO mostrar PNGs para estos)
         html_parent_path: ruta padre donde se guardará el HTML (para rutas relativas)
+        opacity: opacidad del overlay (0.0 a 1.0, default 0.75)
     """
     fg = folium.FeatureGroup(name=group_name, show=True)
     png_count = 0
@@ -252,7 +253,7 @@ def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=N
                 name=f"PNG Grid {display_grid_id}",
                 image=png_path_absolute,  # Ruta absoluta para que Folium encuentre el archivo
                 bounds=bounds,
-                opacity=0.75,
+                opacity=opacity,
                 interactive=True,
                 cross_origin=False,
                 alt=f"{tipo}_grid_{display_grid_id}_{periodo}",
@@ -325,10 +326,12 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
         
         fg_area.add_to(m)
         
-        # Agregar overlays PNG para los 2 períodos
-        for periodo_x, label in zip([periodo_actual, periodo_anterior], 
-                                    [format_periodo_label(periodo_actual, tipo), 
-                                     format_periodo_label(periodo_anterior, tipo)]):
+        # Agregar overlays PNG para los 2 períodos (PRIMERO anterior como base, LUEGO actual encima)
+        for periodo_x, label, opacity_val in zip(
+            [periodo_anterior, periodo_actual], 
+            [format_periodo_label(periodo_anterior, tipo), format_periodo_label(periodo_actual, tipo)],
+            [1.0, 0.75]
+        ):
             if tipo == 'dw':
                 img_dir = imagenes_dir / 'dw'
                 png_filename = f"dw_grid_1_{periodo_x}.png"
@@ -351,7 +354,7 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
                     name=label,
                     image=png_path_absolute,
                     bounds=[[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
-                    opacity=0.75,
+                    opacity=opacity_val,
                     interactive=True,
                     cross_origin=False,
                     show=True
@@ -443,20 +446,24 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
         except Exception as e:
             pass
     
-    # TERCERO: Agregar PNG overlays SOLO para grillas alertadas en FeatureGroups toggleables
-    fg_actual = add_png_overlays(
-        m, grid_gdf, imagenes_dir, periodo_actual, tipo, 
-        format_periodo_label(periodo_actual, tipo),
-        paramo=paramo,
-        alert_grid_ids=alert_grid_ids,
-        html_parent_path=html_parent
-    )
+    # TERCERO: Agregar PNG overlays (PRIMERO anterior como base, LUEGO actual encima)
+    # Período anterior con opacity 1.0 (100%) como capa base
     fg_anterior = add_png_overlays(
         m, grid_gdf, imagenes_dir, periodo_anterior, tipo, 
         format_periodo_label(periodo_anterior, tipo),
         paramo=paramo,
         alert_grid_ids=alert_grid_ids,
-        html_parent_path=html_parent
+        html_parent_path=html_parent,
+        opacity=1.0
+    )
+    # Período actual con opacity 0.75 (75%) encima del anterior
+    fg_actual = add_png_overlays(
+        m, grid_gdf, imagenes_dir, periodo_actual, tipo, 
+        format_periodo_label(periodo_actual, tipo),
+        paramo=paramo,
+        alert_grid_ids=alert_grid_ids,
+        html_parent_path=html_parent,
+        opacity=1.0
     )
     
     # CUARTO: Agregar leyenda si es Dynamic World

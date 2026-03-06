@@ -4,7 +4,7 @@ import ee
 import geemap
 from shapely.ops import unary_union
 from src.aux_utils import log
-from src.config import LOOKBACK_DAYS, PROJECT_ID, ALERT_MIN_THRESHOLD_PCT, ALERT_TOP_N_GRIDS, ALERT_COMBINE_METRICS
+from src.config import LOOKBACK_DAYS, PROJECT_ID, ALERT_THRESHOLD_PP, ALERT_TOP_N_GRIDS, ALERT_COMBINE_METRICS
 
 def authenticate_gee():
     try:
@@ -144,7 +144,7 @@ def get_alert_grids(df_transitions, aoi_name, min_threshold=None, top_n=None, co
         pd.DataFrame: grillas seleccionadas (subset del df original)
         list: grid_ids de las grillas alertadas
     """
-    min_threshold = min_threshold or ALERT_MIN_THRESHOLD_PCT
+    min_threshold = min_threshold or ALERT_THRESHOLD_PP
     top_n = top_n or ALERT_TOP_N_GRIDS
     combine_metrics = combine_metrics if combine_metrics is not None else ALERT_COMBINE_METRICS
     
