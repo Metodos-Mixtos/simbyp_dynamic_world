@@ -75,22 +75,28 @@ El módulo utiliza un sistema inteligente de detección de alertas basado en cam
 ### Parámetros configurables
 En [config.py](src/config.py) se define:
 ```python
-ALERT_THRESHOLD_PP = 1  # Umbral en puntos porcentuales para alertas
+ALERT_THRESHOLD_PP = 10.5  # Umbral en puntos porcentuales para alertas
 ```
+
+**Metodología de calibración del umbral:**
+- El valor de 10.5 puntos porcentuales se estableció mediante análisis estadístico de los cambios observados durante 2025
+- Corresponde al **percentil 10** de la distribución de cambios negativos en las categorías de interés (pp_class1 y pp_class5)
+- Esto significa que el 10% de las observaciones tienen disminuciones mayores a 10.5 puntos porcentuales, mientras que el 90% restante presenta pérdidas menores.
+- **Resultado:** Solo se generan alertas para grillas con cambios significativos y atípicos. 
 
 ### Criterios de alerta
 Se generan alertas (imágenes PNG de grilla y visualización) cuando:
 
 1. **Pérdida de árboles (Clase 1 - Trees)**:
    - La cobertura de árboles disminuye más de `ALERT_THRESHOLD_PP` puntos porcentuales
-   - Ejemplo: Si clase 1 pasa de 30% a 28%, con umbral de 1p.p., se genera alerta
+   - Ejemplo: Si clase 1 pasa de 35% a 23%, la disminución es de 12 p.p., superando el umbral de 10.5 p.p. → Se genera alerta
 
 2. **Pérdida de arbustos/matorrales (Clase 5 - Shrub & Scrub)**:
    - La cobertura de arbustos disminuye más de `ALERT_THRESHOLD_PP` puntos porcentuales
    - **Y** el aumento de árboles NO compensa esa pérdida
    - Esto evita alertar por transiciones naturales arbustos y matorrales a árboles 
-   - Ejemplo exitoso: Clase 5 -10pp, Clase 1 +3pp → Hay alerta (pérdida neta de 7pp)
-   - Ejemplo sin alerta: Clase 5 -10pp, Clase 1 +10pp → No hay alerta
+   - Ejemplo con alerta: Clase 5 -12 p.p., Clase 1 +1 p.p. → Hay alerta (pérdida neta de 11 p.p., supera umbral)
+   - Ejemplo sin alerta: Clase 5 -12 p.p., Clase 1 +12 p.p. → No hay alerta (compensada por aumento de árboles)
 
 3. **Caso especial - Altiplano**:
    - Siempre genera mapas para todas las grillas independientemente del umbral
