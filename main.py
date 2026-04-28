@@ -3,9 +3,10 @@ import argparse
 import os
 import shutil
 from pathlib import Path
-from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX
-from src.dw_utils import get_dynamic_world_image, compute_transitions
+from src.config import AOI_DIR, OUTPUTS_BASE, HEADER_IMG1_PATH, HEADER_IMG2_PATH, FOOTER_IMG_PATH, GRID_SIZE, LOOKBACK_DAYS, USE_GCS, GCS_BUCKET_NAME, GCS_OUTPUTS_BASE, GCS_PREFIX, get_paramo_geojson, download_altiplano_aoi_from_gcs
+from src.dw_utils import get_dynamic_world_image, compute_transitions, get_alert_grids, generate_coverage_csv
 from src.maps_utils import generate_maps
+from src.png_map import get_display_grid_id
 from src.reports.render_report import render
 from src.aux_utils import log, save_json, create_grid
 from src.gcs_utils import upload_directory_to_gcs, upload_file_to_gcs, get_public_url, image_to_base64
@@ -23,16 +24,49 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
     aoi_name = os.path.splitext(os.path.basename(aoi_path))[0]
     log(f"Procesando AOI: {aoi_name}", "info")
 
-    # Crear rutas de las salidas (locales temporales)
-    paths = {k: os.path.join(out_dir, aoi_name, k) for k in ["grilla", "imagenes", "comparacion", "mapas"]}
+
+    # Crear estructura de carpetas para cada páramo
+    base_dir = os.path.join(out_dir, aoi_name)
+    mapas_dir = os.path.join(base_dir, "mapas")
+    imagenes_dir = os.path.join(mapas_dir, "imagenes")
+    dw_dir = os.path.join(imagenes_dir, "dw")
+    sentinel_dir = os.path.join(imagenes_dir, "sentinel")
+    for d in [base_dir, mapas_dir, imagenes_dir, dw_dir, sentinel_dir]:
+        os.makedirs(d, exist_ok=True)
+    paths = {
+        "grilla": os.path.join(base_dir, "grilla"),
+        "imagenes": imagenes_dir,
+        "comparacion": os.path.join(base_dir, "comparacion"),
+        "mapas": mapas_dir
+    }
     for p in paths.values():
         os.makedirs(p, exist_ok=True)
+
+    # Copiar AOI base local a la carpeta del páramo si no existe (tanto en grilla como en la raíz del páramo)
+    from src.config import LOCAL_AOI
+    aoi_base_name = os.path.basename(aoi_path)
+    aoi_local_path = os.path.join(LOCAL_AOI, aoi_base_name)
+    aoi_target_grilla = os.path.join(paths["grilla"], aoi_base_name)
+    aoi_target_root = os.path.join(out_dir, aoi_name, aoi_base_name)
+    import shutil
+    for target in [aoi_target_grilla, aoi_target_root]:
+        if not os.path.exists(target) and os.path.exists(aoi_local_path):
+            shutil.copy2(aoi_local_path, target)
+            log(f"AOI local copiado a: {target}", "info")
 
     # Crear grilla de análisis si no existe
     grid_path = os.path.join(paths["grilla"], f"grid_{aoi_name}_{GRID_SIZE}m.geojson")
     if not os.path.exists(grid_path):
         grid = create_grid(aoi_path, GRID_SIZE)
         grid.to_file(grid_path, driver="GeoJSON")
+    # Si la grilla está vacía, asegúrate de que el AOI base esté en la carpeta raíz y en grilla
+    try:
+        import geopandas as gpd
+        gdf_grid = gpd.read_file(grid_path)
+        if gdf_grid.empty:
+            log(f"[WARN] Grilla vacía para {aoi_name}. Se usará el polígono del AOI para overlays.", "warning")
+    except Exception as e:
+        log(f"[ERROR] No se pudo leer la grilla para {aoi_name}: {e}", "error")
 
     # Crear capas de DW y calcular transiciones
     dw_before = get_dynamic_world_image(aoi_path, date_before)
@@ -46,7 +80,9 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         # Grilla con mayor pérdida de bosque
     if total_perdida_bosque > 0:
         fila_bosque_max = df_trans.loc[df_trans["n_1_a_otro"].idxmax()]
-        grilla_max_bosque = int(fila_bosque_max["grid_id"])
+        grid_id_bosque = int(fila_bosque_max["grid_id"])
+        # Remapear grid_id si es Altiplano (0 → 1)
+        grilla_max_bosque = get_display_grid_id(grid_id_bosque, aoi_name)
         perdida_bosque_max = round(fila_bosque_max["n_1_a_otro"] * 0.01, 2)
     else:
         grilla_max_bosque, perdida_bosque_max = None, 0
@@ -54,7 +90,9 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         # Grilla con mayor cambio de matorral
     if total_perdida_matorral > 0:
         fila_mat_max = df_trans.loc[df_trans["n_5_a_otro_no1"].idxmax()]
-        grilla_max_mat = int(fila_mat_max["grid_id"])
+        grid_id_mat = int(fila_mat_max["grid_id"])
+        # Remapear grid_id si es Altiplano (0 → 1)
+        grilla_max_mat = get_display_grid_id(grid_id_mat, aoi_name)
         perdida_mat_max = round(fila_mat_max["n_5_a_otro_no1"] * 0.01, 2)
     else:
         grilla_max_mat, perdida_mat_max = None, 0
@@ -62,12 +100,19 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
     # Guardar transiciones a CSV
     csv_path = os.path.join(paths["comparacion"], f"{aoi_name}_transiciones.csv")
     df_trans.to_csv(csv_path, index=False)
+    
+    # Generar CSV de coberturas (clases DW en t1 y t2, índices de Sentinel)
+    csv_coverage_path = os.path.join(paths["comparacion"], f"{aoi_name}_coberturas.csv")
+    try:
+        generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current_date, csv_coverage_path)
+    except Exception as e:
+        log(f"⚠️ Error generando CSV de coberturas para {aoi_name}: {e}", "warning")
 
     #sentinel_tif = os.path.join(paths["imagenes"], f"sentinel_rgb_{date_before}_a_{current_date}.tif")
     #if not os.path.exists(sentinel_tif):
         #download_sentinel_rgb_period(grid_path, date_before, current_date, sentinel_tif)
 
-    # Generar mapas
+    # Generar PNGs por grilla y mapas interactivos
     maps_info = generate_maps(
         aoi_path,
         grid_path,
@@ -78,9 +123,16 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         month_str,      
         LOOKBACK_DAYS,
         dw_before=dw_before,
-        dw_current=dw_current
+        dw_current=dw_current,
+        df_transitions=df_trans,
+        aoi_name=aoi_name  # Pasar nombre del AOI para lógica de Altiplano
     )
     
+    # === Seleccionar grillas para alertar (enfoque híbrido) ===
+    alert_grids_df, alert_grid_ids = get_alert_grids(df_trans, aoi_name)
+    
+    # Los mapas interactivos ya se generan dentro de generate_maps() con los overlays PNG
+
     # Si está habilitado GCS, subir archivos
     if USE_GCS:
         log(f"📤 Subiendo {aoi_name} a GCS...", "info")
@@ -112,10 +164,11 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         "PERDIDA_BOSQUE_PARAMOS": round(total_perdida_bosque * 0.01, 2),
         "GRILLA_CON_MAS_PERDIDA": grilla_max_bosque,
         "PERDIDA_BOSQUE_GRILLA_1": perdida_bosque_max,
-        "PERDIDA_MATORRAL_PARAMOS":round(total_perdida_matorral * 0.01, 2),
+        "PERDIDA_MATORRAL_PARAMOS": round(total_perdida_matorral * 0.01, 2),
         "GRILLA_CON_MAS_CAMBIO_5": grilla_max_mat,
         "PERDIDA_MATORRAL_GRILLA_1": perdida_mat_max,
-        **relative_maps
+        "MAPA_DW_INTERACTIVO": relative_maps.get("MAPA_DW_INTERACTIVO", ""),
+        "MAPA_SENTINEL_INTERACTIVO": relative_maps.get("MAPA_SENTINEL_INTERACTIVO", "")
     }
 
     return result
@@ -133,21 +186,51 @@ if __name__ == "__main__":
     
     log(f"📆 Comparando {month_str} {args.anio - 1} ↔ {month_str} {args.anio}", "info")
 
+    # Limpieza solo del periodo actual antes de procesar
     period_name = f"{args.anio}_{args.mes}"
     period_dir = os.path.join(OUTPUTS_BASE, period_name)
+    # Limpieza solo del periodo actual antes de procesar, forzando permisos de escritura
+    import stat
+    def on_rm_error(func, path, exc_info):
+        import os
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception as e:
+            print(f"[WARN] No se pudo borrar {path}: {e}")
+    if os.path.exists(period_dir):
+        import shutil
+        print(f"[INFO] Limpiando carpeta del periodo: {period_dir}")
+        shutil.rmtree(period_dir, onerror=on_rm_error)
     os.makedirs(period_dir, exist_ok=True)
 
+    # Descargar AOI de Altiplano desde GCS y guardarlo en la estructura local
+    try:
+        log("📥 Descargando AOI Altiplano desde GCS...", "info")
+        download_altiplano_aoi_from_gcs(OUTPUTS_BASE, args.anio, args.mes)
+    except Exception as e:
+        log(f"[WARN] No se pudo descargar AOI Altiplano: {e}", "warning")
+        log("⏭️ Continuando sin Altiplano...", "warning")
+
     # Listar archivos GeoJSON desde GCS o local
+    # Listar nombres base de páramos (sin extensión)
     if AOI_DIR.startswith("gs://"):
         fs = gcsfs.GCSFileSystem()
         aoi_dir_clean = AOI_DIR.replace("gs://", "")
         all_files = fs.ls(aoi_dir_clean)
-        geojson_files = [f"gs://{f}" for f in all_files if f.endswith(".geojson") and "paramo_" in f]
+        paramo_names = [os.path.splitext(os.path.basename(f))[0] for f in all_files if f.endswith(".geojson") and "paramo_" in f]
+        geojson_files = [f"gs://{aoi_dir_clean}/{name}.geojson" for name in paramo_names]
     else:
-        geojson_files = [os.path.join(AOI_DIR, f) for f in os.listdir(AOI_DIR) if f.startswith("paramo_")]
+        paramo_names = [os.path.splitext(f)[0] for f in os.listdir(AOI_DIR) if f.startswith("paramo_")]
+        geojson_files = [get_paramo_geojson(name) for name in paramo_names]
     
-    results = [process_aoi(p, date_before, current_date, args.anio, args.mes, period_dir, period_name) for p in geojson_files]
-    
+    results = []
+    for p in geojson_files:
+        try:
+            results.append(process_aoi(p, date_before, current_date, args.anio, args.mes, period_dir, period_name))
+        except Exception as e:
+            log(f"[ERROR] Falló el procesamiento de {p}: {e}", "error")
+
     # Convertir logos a base64 (funciona tanto para GCS como local)
     log("🖼 Convirtiendo logos a base64...", "info")
     header_img1_b64 = image_to_base64(HEADER_IMG1_PATH)

@@ -37,6 +37,7 @@ data/
 output/
 temp/
 temp_data/
+AOIs/
 *.tif
 *.shp
 *.shx
