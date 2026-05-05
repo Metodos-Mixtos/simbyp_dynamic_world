@@ -5,9 +5,10 @@ Este módulo permite analizar los cambios interanuales en las coberturas de la t
 Genera estadísticas de cambio por grilla, mapas interactivos (Folium) y un reporte técnico automatizado en formato HTML.
 
 ## Requisitos del sistema
-- Python 3.8 o superior  
+- Python 3.11 o superior  
 - Cuenta y autenticación activa en **Google Earth Engine**  
 - Entorno virtual recomendado (`venv`)
+- **Para despliegue en Cloud Run**: Proyecto de Google Cloud con Earth Engine API habilitado
 
 ## Instalación
 
@@ -19,15 +20,34 @@ pip install -r requirements.txt
 earthengine authenticate
 ```
 
+### Dependencias principales
+- `geopandas`, `folium`, `pandas`, `numpy`, `rasterio`, `shapely`, `matplotlib`
+- `geemap>=0.30`, `geedim>=1.7` - Descarga de imágenes de Earth Engine
+- `earthengine-api>=0.1.400` - API de Google Earth Engine
+- `google-cloud-storage`, `google-cloud-secret-manager` - Integración con GCP
+
 
 ## Configuración del entorno
+
+### Ejecución local
 El módulo requiere un archivo `.env` con las siguientes variables:
 ```
 GCP_PROJECT=nombre_del_proyecto_gee
-INPUTS_PATH=gs://material-estatico-sdp/SIMBYP_DATA
-OUTPUTS_BASE_PATH=gs://reportes-simbyp
-GOOGLE_APPLICATION_CREDENTIALS=/ruta/a/service-account.json
+EE_SERVICE_ACCOUNT_KEY={"type": "service_account", ...}  # JSON completo de la service account
 ```
+
+**Nota**: Las rutas de entrada/salida (`INPUTS_PATH`, `OUTPUTS_BASE_PATH`) están configuradas directamente en [config.py](src/config.py) por defecto:
+```python
+INPUTS_PATH = "gs://material-estatico-sdp/SIMBYP_DATA"
+GCS_OUTPUTS_BASE = "gs://reportes-simbyp"
+```
+
+### Despliegue en Cloud Run Jobs
+En producción, los secrets se cargan desde **Google Cloud Secret Manager**:
+- `GCP_PROJECT`: ID del proyecto de GCP
+- `EE_SERVICE_ACCOUNT_KEY`: Credenciales de Earth Engine en formato JSON
+
+Ver sección **Despliegue en Cloud Run** más abajo para detalles.
 
 ## Sistema de almacenamiento en Google Cloud Storage
 
@@ -130,6 +150,15 @@ dynamic_world/
 ```
 
 ## Ejecución del módulo
+
+### Modo automático (mes anterior)
+Si no se especifican parámetros, el módulo procesa automáticamente el mes anterior al actual:
+```bash
+python3 main.py
+# Ejemplo: Si hoy es 5 mayo 2026, procesará abril 2026
+```
+
+### Modo manual (especificar período)
 Ejemplo de ejecución para julio de 2025:
 ```bash
 python3 main.py --anio 2025 --mes 7
@@ -263,4 +292,105 @@ USE_GCS = False  # Guardar solo localmente
 ```python
 GRID_SIZE = 10000  # Default: 10km × 10km (sin embargo, es posible cambiar el tamaño de la grilla, por ejemplo, a 5000 para 5km × 5km)
 ```
+
+## Despliegue en Cloud Run Jobs
+
+El módulo está diseñado para ejecutarse como un **Cloud Run Job** en Google Cloud Platform, permitiendo ejecución automatizada mensual.
+
+### Arquitectura
+- **Imagen Docker**: Python 3.11 con GDAL, geospatial libraries, y locale español
+- **Secrets Management**: Google Cloud Secret Manager para credenciales
+- **Storage**: Google Cloud Storage para inputs/outputs
+- **Earth Engine**: API habilitado en el proyecto GCP
+
+### Configuración inicial
+
+#### 1. Crear secrets en Secret Manager
+```bash
+# Secret: GCP_PROJECT (sin salto de línea al final)
+echo -n "nombre_del_proyecto" | gcloud secrets create GCP_PROJECT --data-file=-
+
+# Secret: EE_SERVICE_ACCOUNT_KEY (JSON completo de Earth Engine)
+gcloud secrets create EE_SERVICE_ACCOUNT_KEY --data-file=./ee-service-account.json
+```
+
+#### 2. Construir y subir imagen Docker
+```bash
+# Autenticar con GCP
+gcloud auth login
+gcloud config set project nombre_del_proyecto
+
+# Construir imagen remotamente con Cloud Build
+gcloud builds submit --tag gcr.io/nombre_del_proyecto/dynamic-world:latest
+```
+
+#### 3. Crear Cloud Run Job
+```bash
+gcloud run jobs create dynamic-world \
+  --image gcr.io/nombre_del_proyecto/dynamic-world:latest \
+  --region us-central1 \
+  --memory 4Gi \
+  --cpu 2 \
+  --max-retries 0 \
+  --task-timeout 1h \
+  --set-secrets=GCP_PROJECT=GCP_PROJECT:latest,EE_SERVICE_ACCOUNT_KEY=EE_SERVICE_ACCOUNT_KEY:latest \
+  --service-account service-account-app@nombre_del_proyecto.iam.gserviceaccount.com
+```
+
+#### 4. Configurar permisos de la service account
+La service account necesita los siguientes roles:
+- `roles/secretmanager.secretAccessor` - Acceso a secrets
+- `roles/serviceusage.serviceUsageConsumer` - Uso de APIs
+- `roles/earthengine.writer` - Acceso a Earth Engine
+- `roles/storage.objectAdmin` - Lectura/escritura en GCS
+
+```bash
+PROJECT_ID="nombre_del_proyecto"
+SA_EMAIL="sa-bosques-app@${PROJECT_ID}.iam.gserviceaccount.com"
+
+# Habilitar Earth Engine API
+gcloud services enable earthengine.googleapis.com --project=${PROJECT_ID}
+
+# Asignar roles
+gcloud projects add-iam-policy-binding ${PROJECT_ID} \
+  --member="serviceAccount:${SA_EMAIL}" \
+  --role="roles/serviceusage.serviceUsageConsumer"
+```
+
+### Ejecución manual
+```bash
+# Ejecutar el job (procesa el mes anterior automáticamente)
+gcloud run jobs execute dynamic-world --region us-central1
+
+# Ver ejecuciones recientes
+gcloud run jobs executions list --job=dynamic-world --region=us-central1 --limit=5
+
+# Ver logs de una ejecución específica
+gcloud run jobs executions describe EXECUTION_ID --region=us-central1
+```
+
+### Monitoreo
+- **Consola web**: `https://console.cloud.google.com/run/jobs?project=nombre_del_proyecto`
+- **Logs**: Los logs muestran el progreso de cada AOI procesado y alertas generadas
+- **Outputs**: Los reportes se publican automáticamente en `gs://reportes-simbyp/dynamic_world/`
+
+### Actualización del código
+Cuando se hacen cambios en el código:
+
+```bash
+# 1. Reconstruir imagen
+gcloud builds submit --tag gcr.io/nombre_del_proyecto/dynamic-world:latest
+
+# 2. Actualizar el job (usa automáticamente la imagen :latest)
+gcloud run jobs update dynamic-world \
+  --image gcr.io/nombre_del_proyecto/dynamic-world:latest \
+  --region us-central1
+```
+
+### Troubleshooting
+- **Permisos de Earth Engine**: Asegurar que la service account esté registrada en Earth Engine
+- **Secrets con saltos de línea**: Recrear el secret GCP_PROJECT sin `\n` al final
+- **Timeouts**: Ajustar `--task-timeout` si el procesamiento toma más de 1 hora
+- **Memoria insuficiente**: Aumentar `--memory` (máximo 32Gi en Cloud Run)
+
 

@@ -175,19 +175,33 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Pipeline de análisis Dynamic World interanual por mes")
-    parser.add_argument("--anio", type=int, required=True, help="Año en formato YYYY (por ejemplo, 2025)")
-    parser.add_argument("--mes", type=int, required=True, help="Mes en formato 1–12")
+    parser.add_argument("--anio", type=int, required=False, default=None, help="Año en formato YYYY (por ejemplo, 2025). Si no se especifica, usa el mes anterior al actual.")
+    parser.add_argument("--mes", type=int, required=False, default=None, help="Mes en formato 1–12. Si no se especifica, usa el mes anterior al actual.")
     args = parser.parse_args()
-    month_str = datetime(args.anio, args.mes, 1).strftime("%B").capitalize()
+    
+    # Si no se especifican año y mes, calcular el mes anterior automáticamente
+    if args.anio is None or args.mes is None:
+        from datetime import timedelta
+        today = datetime.now()
+        first_of_current_month = today.replace(day=1)
+        last_month = first_of_current_month - timedelta(days=1)
+        anio = last_month.year
+        mes = last_month.month
+        log(f"⚠️ No se especificaron --anio y --mes. Usando mes anterior: {mes}/{anio}", "warning")
+    else:
+        anio = args.anio
+        mes = args.mes
+    
+    month_str = datetime(anio, mes, 1).strftime("%B").capitalize()
 
     #current_date, date_before = get_semester_dates(args.semestre, args.anio)
-    current_date = datetime(args.anio, args.mes, 1).strftime("%Y-%m-%d")
-    date_before = datetime(args.anio - 1, args.mes, 1).strftime("%Y-%m-%d")
+    current_date = datetime(anio, mes, 1).strftime("%Y-%m-%d")
+    date_before = datetime(anio - 1, mes, 1).strftime("%Y-%m-%d")
     
-    log(f"📆 Comparando {month_str} {args.anio - 1} ↔ {month_str} {args.anio}", "info")
+    log(f"📆 Comparando {month_str} {anio - 1} ↔ {month_str} {anio}", "info")
 
     # Limpieza solo del periodo actual antes de procesar
-    period_name = f"{args.anio}_{args.mes}"
+    period_name = f"{anio}_{mes}"
     period_dir = os.path.join(OUTPUTS_BASE, period_name)
     # Limpieza solo del periodo actual antes de procesar, forzando permisos de escritura
     import stat
@@ -207,7 +221,7 @@ if __name__ == "__main__":
     # Descargar AOI de Altiplano desde GCS y guardarlo en la estructura local
     try:
         log("📥 Descargando AOI Altiplano desde GCS...", "info")
-        download_altiplano_aoi_from_gcs(OUTPUTS_BASE, args.anio, args.mes)
+        download_altiplano_aoi_from_gcs(OUTPUTS_BASE, anio, mes)
     except Exception as e:
         log(f"[WARN] No se pudo descargar AOI Altiplano: {e}", "warning")
         log("⏭️ Continuando sin Altiplano...", "warning")
@@ -227,7 +241,7 @@ if __name__ == "__main__":
     results = []
     for p in geojson_files:
         try:
-            results.append(process_aoi(p, date_before, current_date, args.anio, args.mes, period_dir, period_name))
+            results.append(process_aoi(p, date_before, current_date, anio, mes, period_dir, period_name))
         except Exception as e:
             log(f"[ERROR] Falló el procesamiento de {p}: {e}", "error")
 
@@ -240,19 +254,19 @@ if __name__ == "__main__":
     # Generar JSON y HTML localmente con logos en base64
     json_final = {
         "MES": month_str,
-        "ANIO": args.anio,
+        "ANIO": anio,
         "HEADER_IMG1": header_img1_b64,
         "HEADER_IMG2": header_img2_b64,
         "FOOTER_IMG": footer_img_b64,
         "PARAMOS": results
     }
 
-    json_path = os.path.join(period_dir, f"reporte_paramos_{args.anio}_{args.mes}.json")
+    json_path = os.path.join(period_dir, f"reporte_paramos_{anio}_{mes}.json")
     save_json(json_final, json_path)
 
     BASE_DIR = Path(__file__).resolve().parent
     tpl_path = BASE_DIR / "src" / "reports" / "report_template.html"
-    html_path = os.path.join(period_dir, f"reporte_paramos_{args.anio}_{args.mes}.html")
+    html_path = os.path.join(period_dir, f"reporte_paramos_{anio}_{mes}.html")
 
     render(Path(tpl_path), Path(json_path), Path(html_path))
     log("Reporte HTML generado correctamente.", "success")
@@ -260,8 +274,8 @@ if __name__ == "__main__":
     # Subir reporte final a GCS
     if USE_GCS:
         log("📤 Subiendo reporte final a GCS...", "info")
-        json_blob = f"{GCS_PREFIX}/{period_name}/reporte_paramos_{args.anio}_{args.mes}.json"
-        html_blob = f"{GCS_PREFIX}/{period_name}/reporte_paramos_{args.anio}_{args.mes}.html"
+        json_blob = f"{GCS_PREFIX}/{period_name}/reporte_paramos_{anio}_{mes}.json"
+        html_blob = f"{GCS_PREFIX}/{period_name}/reporte_paramos_{anio}_{mes}.html"
         
         upload_file_to_gcs(json_path, GCS_BUCKET_NAME, json_blob)
         upload_file_to_gcs(html_path, GCS_BUCKET_NAME, html_blob)

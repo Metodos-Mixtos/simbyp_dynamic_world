@@ -1,13 +1,12 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from .secrets_utils import load_secrets
 
-# Buscar .env en la raíz del proyecto
-env_path = Path(__file__).parent.parent / ".env"
-load_dotenv(env_path, override=True)
+# === Paths base (hardcoded - not sensitive) ===
+INPUTS_PATH = "gs://material-estatico-sdp/SIMBYP_DATA"
+GCS_OUTPUTS_BASE = "gs://reportes-simbyp"
 
-# === Paths base ===
-INPUTS_PATH = os.getenv("INPUTS_PATH")
+# === Derived paths ===
 AOI_DIR = f"{INPUTS_PATH}/area_estudio/dynamic_world"
 LOCAL_AOI = os.path.join(os.getcwd(), "AOIs")
 HEADER_IMG1_PATH = f"{INPUTS_PATH}/SDP Logos/asi_4.png"
@@ -15,7 +14,6 @@ HEADER_IMG2_PATH = f"{INPUTS_PATH}/SDP Logos/bogota_4.png"
 FOOTER_IMG_PATH = f"{INPUTS_PATH}/SDP Logos/secre_5.png"
 
 # === Cloud Storage ===
-GCS_OUTPUTS_BASE = os.getenv("OUTPUTS_BASE_PATH", "gs://reportes-simbyp")
 GCS_BUCKET_NAME = GCS_OUTPUTS_BASE.replace("gs://", "")
 GCS_PREFIX = "dynamic_world"  # Carpeta dentro del bucket
 USE_GCS = True  # Cambiar a False para guardar localmente
@@ -23,10 +21,20 @@ USE_GCS = True  # Cambiar a False para guardar localmente
 # === Outputs locales (temporal) ===
 OUTPUTS_BASE = os.path.join(os.getcwd(), "temp_data")
 
+# === Load secrets (only sensitive data) ===
+# Cargar configuración con fallback (igual que GFW):
+# 1. Variables de entorno (Cloud Run mounts) - FASTEST
+# 2. .env file (desarrollo local)
+# 3. Secret Manager API (fallback)
+secrets = load_secrets()
+PROJECT_ID = secrets["GCP_PROJECT"]
+EE_SERVICE_ACCOUNT_KEY = secrets.get("EE_SERVICE_ACCOUNT_KEY")
+
+print(f"✓ Configuración cargada - Proyecto: {PROJECT_ID}")
+
 # === Parámetros globales ===
 GRID_SIZE = 10000  # metros
 LOOKBACK_DAYS = 365
-PROJECT_ID = os.getenv("GCP_PROJECT")
 
 # === Configuración de alertas por cambios de cobertura ===
 # Enfoque híbrido: seleccionar los TOP N grillas que superen el umbral mínimo

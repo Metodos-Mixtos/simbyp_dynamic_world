@@ -145,7 +145,7 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
                     else:
                         png_file.unlink(missing_ok=True)
                 except Exception as e:
-                    pass
+                    log(f"⚠️ Error descargando DW PNG grid_{file_grid_id}_{date_str}: {e}", "warning")
             else:
                 png_count_dw += 1
         
@@ -177,7 +177,7 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
                         else:
                             png_file.unlink(missing_ok=True)
                 except Exception as e:
-                    pass
+                    log(f"⚠️ Error descargando Sentinel PNG grid_{file_grid_id}_{date_str}: {e}", "warning")
             else:
                 png_count_sentinel += 1
     
