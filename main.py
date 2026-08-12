@@ -20,9 +20,12 @@ try:
 except:
     locale.setlocale(locale.LC_TIME, "es_CO.UTF-8")
     
-def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_name):
+def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_name, custom_message=None):
     aoi_name = os.path.splitext(os.path.basename(aoi_path))[0]
     log(f"Procesando AOI: {aoi_name}", "info")
+
+    gcs_prefix = f"{GCS_PREFIX}/{period_name}/{aoi_name}"
+    image_base_url = f"https://storage.googleapis.com/{GCS_BUCKET_NAME}/{gcs_prefix}/mapas/imagenes" if USE_GCS else None
 
 
     # Crear estructura de carpetas para cada páramo
@@ -125,18 +128,20 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         dw_before=dw_before,
         dw_current=dw_current,
         df_transitions=df_trans,
-        aoi_name=aoi_name  # Pasar nombre del AOI para lógica de Altiplano
+        aoi_name=aoi_name,  # Pasar nombre del AOI para lógica de Altiplano
+        image_base_url=image_base_url
     )
     
     # === Seleccionar grillas para alertar (enfoque híbrido) ===
     alert_grids_df, alert_grid_ids = get_alert_grids(df_trans, aoi_name)
+    alert_grid_count = int(maps_info.get("ALERT_GRID_COUNT", len(alert_grid_ids or [])))
+    mensaje = custom_message or "Para este periodo no se detectaron alertas bajo esta metodología."
     
     # Los mapas interactivos ya se generan dentro de generate_maps() con los overlays PNG
 
     # Si está habilitado GCS, subir archivos
     if USE_GCS:
         log(f"📤 Subiendo {aoi_name} a GCS...", "info")
-        gcs_prefix = f"{GCS_PREFIX}/{period_name}/{aoi_name}"
         local_aoi_dir = os.path.join(out_dir, aoi_name)
         
         # Subir todo el directorio del AOI
@@ -145,16 +150,24 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         # Convertir rutas de mapas a URLs públicas
         relative_maps = {}
         for k, local_path in maps_info.items():
+            if not isinstance(local_path, (str, Path)):
+                continue
             # Calcular blob_name basado en la estructura de archivos
             rel_to_aoi = os.path.relpath(local_path, local_aoi_dir).replace("\\", "/")
             blob_name = f"{gcs_prefix}/{rel_to_aoi}"
             relative_maps[k] = get_public_url(GCS_BUCKET_NAME, blob_name)
+        table_url = get_public_url(
+            GCS_BUCKET_NAME,
+            f"{gcs_prefix}/comparacion/{aoi_name}_coberturas.csv"
+        )
     else:
         # Hacer rutas relativas al archivo HTML principal del periodo
         relative_maps = {
             k: os.path.relpath(v, start=out_dir)
             for k, v in maps_info.items()
+            if isinstance(v, (str, Path))
         }
+        table_url = os.path.relpath(csv_coverage_path, start=out_dir)
 
     # Generar resultado final
     # Remover prefijo "paramo_" y formatear nombre
@@ -167,8 +180,10 @@ def process_aoi(aoi_path, date_before, current_date, anio, mes, out_dir, period_
         "PERDIDA_MATORRAL_PARAMOS": round(total_perdida_matorral * 0.01, 2),
         "GRILLA_CON_MAS_CAMBIO_5": grilla_max_mat,
         "PERDIDA_MATORRAL_GRILLA_1": perdida_mat_max,
-        "MAPA_DW_INTERACTIVO": relative_maps.get("MAPA_DW_INTERACTIVO", ""),
-        "MAPA_SENTINEL_INTERACTIVO": relative_maps.get("MAPA_SENTINEL_INTERACTIVO", "")
+        "TABLA_COMPLETA": table_url,
+        "ALERTA_SIN_GRILLAS": [{"MENSAJE_ALERTA": mensaje}] if alert_grid_count == 0 else [],
+        "MOSTRAR_MAPA": [{"MAPA_COMBINADO_INTERACTIVO": relative_maps.get("MAPA_COMBINADO_INTERACTIVO", "")}] if alert_grid_count > 0 else [],
+        "MAPA_COMBINADO_INTERACTIVO": relative_maps.get("MAPA_COMBINADO_INTERACTIVO", "")
     }
 
     return result

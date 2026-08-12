@@ -36,8 +36,9 @@ def fix_png(img_path, paramo=None):
         with Image.open(img_path) as im:
             im = im.convert('RGBA')
             
-            # Solo hacer transparentes los negros para DW, no para Sentinel
-            if is_dw:
+            # En PNG exportado, NoData viene como negro puro.
+            # Aplicar transparencia para DW y Sentinel.
+            if is_dw or is_sentinel:
                 datas = im.getdata()
                 newData = []
                 for item in datas:
@@ -191,7 +192,7 @@ def add_grid_labels(m, grid_gdf, paramo=None):
 
 from datetime import datetime
 
-def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=None, alert_grid_ids=None, html_parent_path=None, opacity=1.0):
+def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=None, alert_grid_ids=None, html_parent_path=None, opacity=1.0, show_layer=True, image_base_url=None):
     """
     Agrega overlays PNG SOLO para grillas alertadas a un mapa Folium.
     Usa rutas RELATIVAS para que funcione tanto localmente como en GCS.
@@ -208,7 +209,7 @@ def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=N
         html_parent_path: ruta padre donde se guardará el HTML (para rutas relativas)
         opacity: opacidad del overlay (0.0 a 1.0, default 0.75)
     """
-    fg = folium.FeatureGroup(name=group_name, show=True)
+    fg = folium.FeatureGroup(name=group_name, show=show_layer)
     png_count = 0
     missing_count = 0
     
@@ -239,27 +240,35 @@ def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=N
             continue
         
         png_path = img_dir / png_filename
+        has_local_png = png_path.exists()
+        has_remote_png = bool(image_base_url)
         
-        if png_path.exists():
+        if has_local_png:
             # Obtener bounds del geometry (minx, miny, maxx, maxy)
             bounds_tuple = row.geometry.bounds
             bounds = [[bounds_tuple[1], bounds_tuple[0]], [bounds_tuple[3], bounds_tuple[2]]]
             
-            # IMPORTANTE: Usar ruta ABSOLUTA para que Folium pueda acceder al archivo
-            # Al renderizar en el navegador, las rutas relativas funcionarán correctamente
-            png_path_absolute = str(png_path.resolve())
+            if image_base_url:
+                cache_bust = int(png_path.stat().st_mtime)
+                image_src = f"{image_base_url}/{tipo}/{png_filename}?v={cache_bust}"
+            else:
+                # Usar ruta ABSOLUTA local para que Folium pueda leer el archivo al generar el HTML.
+                image_src = str(png_path.resolve())
             
             folium.raster_layers.ImageOverlay(
                 name=f"PNG Grid {display_grid_id}",
-                image=png_path_absolute,  # Ruta absoluta para que Folium encuentre el archivo
+                image=image_src,
                 bounds=bounds,
                 opacity=opacity,
                 interactive=True,
                 cross_origin=False,
-                alt=f"{tipo}_grid_{display_grid_id}_{periodo}",
-                show=True
+                alt=f"{tipo}_grid_{display_grid_id}_{periodo}"
             ).add_to(fg)
             png_count += 1
+        elif has_remote_png:
+            # Evita usar artefactos remotos viejos si el PNG local no se generó en esta corrida.
+            missing_count += 1
+            print(f"[WARN] PNG local no generado, se omite overlay remoto potencialmente desactualizado: {png_filename}")
         else:
             missing_count += 1
     
@@ -267,13 +276,13 @@ def add_png_overlays(m, grid_gdf, mapas_dir, periodo, tipo, group_name, paramo=N
     fg.add_to(m)
     return fg
 
-def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional[str]=None, imagenes_dir: Optional[str]=None, output_html: Optional[str]=None, alert_grid_ids: Optional[list]=None):
+def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional[str]=None, imagenes_dir: Optional[str]=None, output_html: Optional[str]=None, alert_grid_ids: Optional[list]=None, image_base_url: Optional[str]=None):
 
     """
-    Genera un mapa Folium con overlays PNG para un páramo, periodo y tipo (dw/sentinel).
+    Genera un mapa Folium con overlays PNG para un páramo, periodo y tipo (dw/sentinel/combinado).
     - paramo: nombre del páramo (ej: 'paramo_chingaza')
     - periodo: string periodo actual (ej: '2025-12-01')
-    - tipo: 'dw' o 'sentinel'
+    - tipo: 'dw', 'sentinel' o 'combinado'
     - grilla_path: ruta al geojson de la grilla
     - imagenes_dir: carpeta con subcarpetas dw/ y sentinel/ con los PNGs
     - output_html: ruta de salida del HTML
@@ -326,45 +335,62 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
         
         fg_area.add_to(m)
         
-        # Agregar overlays PNG para los 2 períodos (PRIMERO anterior como base, LUEGO actual encima)
-        for periodo_x, label, opacity_val in zip(
-            [periodo_anterior, periodo_actual], 
-            [format_periodo_label(periodo_anterior, tipo), format_periodo_label(periodo_actual, tipo)],
-            [1.0, 0.75]
-        ):
-            if tipo == 'dw':
+        # Agregar overlays PNG por tipo/período.
+        if tipo == 'combinado':
+            overlay_specs = [
+                ('dw', periodo_anterior),
+                ('dw', periodo_actual),
+                ('sentinel', periodo_anterior),
+                ('sentinel', periodo_actual),
+            ]
+        else:
+            overlay_specs = [(tipo, periodo_anterior), (tipo, periodo_actual)]
+
+        for tipo_x, periodo_x in overlay_specs:
+            label = format_periodo_label(periodo_x, tipo_x)
+            show_layer = tipo_x == 'dw'
+
+            if tipo_x == 'dw':
                 img_dir = imagenes_dir / 'dw'
                 png_filename = f"dw_grid_1_{periodo_x}.png"
-            elif tipo == 'sentinel':
+            elif tipo_x == 'sentinel':
                 img_dir = imagenes_dir / 'sentinel'
                 png_filename = f"sentinel_grid_1_{periodo_x}.png"
             else:
                 continue
-            
+
             png_path = img_dir / png_filename
             bounds = list(aoi_gdf.unary_union.bounds)
-            
-            if png_path.exists():
-                fg = folium.FeatureGroup(name=label, show=True)
-                
-                # Usar ruta ABSOLUTA para que Folium pueda acceder al archivo
-                png_path_absolute = str(png_path.resolve())
-                
+
+            has_local_png = png_path.exists()
+            has_remote_png = bool(image_base_url)
+
+            if has_local_png:
+                fg = folium.FeatureGroup(name=label, show=show_layer)
+
+                if image_base_url:
+                    cache_bust = int(png_path.stat().st_mtime)
+                    image_src = f"{image_base_url}/{tipo_x}/{png_filename}?v={cache_bust}"
+                else:
+                    # Usar ruta ABSOLUTA local para que Folium pueda leer el archivo al generar el HTML.
+                    image_src = str(png_path.resolve())
+
                 folium.raster_layers.ImageOverlay(
                     name=label,
-                    image=png_path_absolute,
+                    image=image_src,
                     bounds=[[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
-                    opacity=opacity_val,
+                    opacity=1.0,
                     interactive=True,
-                    cross_origin=False,
-                    show=True
+                    cross_origin=False
                 ).add_to(fg)
                 fg.add_to(m)
+            elif has_remote_png:
+                print(f"[WARN] PNG local no generado, se omite overlay remoto potencialmente desactualizado: {png_filename}")
             else:
-                print(f"[WARN] PNG no encontrado para AOI {paramo} periodo {periodo_x}: {png_path}")
-        
-        # Agregar leyenda si es Dynamic World
-        if tipo == 'dw':
+                print(f"[WARN] PNG no encontrado para AOI {paramo} ({tipo_x}) periodo {periodo_x}: {png_path}")
+
+        # Agregar leyenda si el mapa contiene capas Dynamic World
+        if tipo in ('dw', 'combinado'):
             add_dw_legend(m)
         
         folium.LayerControl(collapsed=False).add_to(m)
@@ -446,28 +472,36 @@ def generar_mapa_png(paramo: str, periodo: str, tipo: str, grilla_path: Optional
         except Exception as e:
             pass
     
-    # TERCERO: Agregar PNG overlays (PRIMERO anterior como base, LUEGO actual encima)
-    # Período anterior con opacity 1.0 (100%) como capa base
-    fg_anterior = add_png_overlays(
-        m, grid_gdf, imagenes_dir, periodo_anterior, tipo, 
-        format_periodo_label(periodo_anterior, tipo),
-        paramo=paramo,
-        alert_grid_ids=alert_grid_ids,
-        html_parent_path=html_parent,
-        opacity=1.0
-    )
-    # Período actual con opacity 0.75 (75%) encima del anterior
-    fg_actual = add_png_overlays(
-        m, grid_gdf, imagenes_dir, periodo_actual, tipo, 
-        format_periodo_label(periodo_actual, tipo),
-        paramo=paramo,
-        alert_grid_ids=alert_grid_ids,
-        html_parent_path=html_parent,
-        opacity=1.0
-    )
-    
-    # CUARTO: Agregar leyenda si es Dynamic World
-    if tipo == 'dw':
+    # TERCERO: Agregar PNG overlays
+    if tipo == 'combinado':
+        overlay_specs = [
+            ('dw', periodo_anterior),
+            ('dw', periodo_actual),
+            ('sentinel', periodo_anterior),
+            ('sentinel', periodo_actual),
+        ]
+    else:
+        overlay_specs = [(tipo, periodo_anterior), (tipo, periodo_actual)]
+
+    for tipo_x, periodo_x in overlay_specs:
+        show_layer = tipo_x == 'dw' if tipo == 'combinado' else True
+        add_png_overlays(
+            m,
+            grid_gdf,
+            imagenes_dir,
+            periodo_x,
+            tipo_x,
+            format_periodo_label(periodo_x, tipo_x),
+            paramo=paramo,
+            alert_grid_ids=alert_grid_ids,
+            html_parent_path=html_parent,
+            opacity=1.0,
+            show_layer=show_layer,
+            image_base_url=image_base_url,
+        )
+
+    # CUARTO: Agregar leyenda si el mapa contiene capas Dynamic World
+    if tipo in ('dw', 'combinado'):
         add_dw_legend(m)
     
     # QUINTO: Agregar números de grillas (con remapeo para Altiplano)
@@ -504,7 +538,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Genera mapa Folium con overlays PNG de grilla para un páramo y periodo.")
     parser.add_argument("--paramo", required=True, help="Nombre del páramo (ej: paramo_chingaza)")
     parser.add_argument("--periodo", required=True, help="Periodo actual (ej: 2025-12-01)")
-    parser.add_argument("--tipo", required=True, choices=["dw", "sentinel"], help="Tipo de imagen: dw o sentinel")
+    parser.add_argument("--tipo", required=True, choices=["dw", "sentinel", "combinado"], help="Tipo de imagen: dw, sentinel o combinado")
     parser.add_argument("--grilla_path", help="Ruta al geojson de la grilla")
     parser.add_argument("--mapas_dir", help="Directorio de los PNGs")
     parser.add_argument("--output_html", help="Ruta de salida del HTML")

@@ -2,19 +2,55 @@ import geopandas as gpd
 import pandas as pd
 import ee
 import geemap
+import json
+import os
 from shapely.ops import unary_union
 from src.aux_utils import log
-from src.config import LOOKBACK_DAYS, PROJECT_ID, ALERT_THRESHOLD_PP, ALERT_TOP_N_GRIDS, ALERT_COMBINE_METRICS
+from src.config import LOOKBACK_DAYS, PROJECT_ID, ALERT_THRESHOLD_PP, ALERT_TOP_N_GRIDS, ALERT_COMBINE_METRICS, EE_SERVICE_ACCOUNT_KEY
+
+
+def _build_service_account_credentials():
+    """Crea credenciales de Earth Engine desde JSON inline o archivo local."""
+    if not EE_SERVICE_ACCOUNT_KEY:
+        return None
+
+    key_source = str(EE_SERVICE_ACCOUNT_KEY).strip().strip('"').strip("'")
+
+    # Caso 1: JSON inline en variable de entorno/.env
+    try:
+        key_json = json.loads(key_source)
+        service_account = key_json.get("client_email")
+        if service_account:
+            return ee.ServiceAccountCredentials(service_account, key_data=key_source)
+    except Exception:
+        pass
+
+    # Caso 2: ruta a archivo JSON de credenciales
+    if os.path.exists(key_source):
+        with open(key_source, "r", encoding="utf-8") as f:
+            key_json = json.load(f)
+        service_account = key_json.get("client_email")
+        if service_account:
+            return ee.ServiceAccountCredentials(service_account, key_file=key_source)
+
+    return None
 
 def authenticate_gee():
     try:
+        creds = _build_service_account_credentials()
+        if creds:
+            ee.Initialize(credentials=creds, project=PROJECT_ID)
+            log("Autenticado con Earth Engine (service account).", "success")
+            return
+
         ee.Initialize(project=PROJECT_ID)
-        log("Autenticado con Earth Engine.", "success")
-    except Exception:
+        log("Autenticado con Earth Engine (credenciales locales).", "success")
+    except Exception as e:
+        log(f"Fallo autenticación automática: {e}", "warning")
         log("Requiere autenticación manual...", "warning")
         ee.Authenticate()
         ee.Initialize(project=PROJECT_ID)
-        log("Autenticación completada.", "success")
+        log("Autenticación manual completada.", "success")
 
 def get_dynamic_world_image(aoi_path, end_date, lookback_days=LOOKBACK_DAYS):
     authenticate_gee()

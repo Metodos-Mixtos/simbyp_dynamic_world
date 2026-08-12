@@ -23,28 +23,30 @@ def make_nas_transparent(png_path, image_type='sentinel'):
             if img.mode != 'RGBA':
                 img = img.convert('RGBA')
             data = np.array(img)
-            mask = (data[:,:,0] == 0) & (data[:,:,1] == 0) & (data[:,:,2] == 0)
-            data[mask, 3] = 0
+            # NoData queda negro puro en PNG exportado para ambos tipos.
+            # Se transparenta solo negro exacto para no borrar sombras válidas.
+            if str(image_type).lower() in ('dw', 'sentinel'):
+                mask = (data[:,:,0] == 0) & (data[:,:,1] == 0) & (data[:,:,2] == 0)
+                data[mask, 3] = 0
             result_img = Image.fromarray(data, 'RGBA')
             result_img.save(png_path)
     except Exception as e:
         log(f"Error transparencia en {png_path}: {e}", "warning")
 
-def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current, df_transitions=None, aoi_name=None):
+def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio, mes, lookback_days, dw_before, dw_current, df_transitions=None, aoi_name=None, image_base_url=None):
     """
     Pipeline COMPLETO:
     1. Genera PNGs de DW y Sentinel para grillas con alertas según CSV de coberturas
        - Alerta si pp_class_1 (árboles) disminuye más de ALERT_THRESHOLD_PP
        - Alerta si pp_class_5 (arbustos/matorrales) disminuye más de ALERT_THRESHOLD_PP 
          Y el aumento de árboles no compensa esa pérdida (evita transiciones 5→1)
-    2. Genera HTMLs interactivos (dw_mes.html, sentinel_mes.html)
+    2. Genera un HTML interactivo combinado (4 capas: DW/Sentinel para t1 y t2)
     
     Estructura en map_dir:
     ├── imagenes/
     │   ├── dw/
     │   └── sentinel/
-    ├── dw_mes.html
-    └── sentinel_mes.html
+    └── mapa_combinado_mes.html
     """
     import shapely
     from src.png_map import generar_mapa_png, get_file_grid_id
@@ -156,19 +158,34 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
         ]:
             if not png_file.exists():
                 try:
+                    # Ventana simétrica alrededor de la fecha objetivo para reducir casos sin escenas.
                     date_start = ee.Date(date_str).advance(-lookback_days, "day")
-                    date_end = ee.Date(date_str).advance(1, "day")
-                    col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
+                    date_end = ee.Date(date_str).advance(lookback_days + 1, "day")
+
+                    base_col = ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED") \
                         .filterDate(date_start, date_end) \
                         .filterBounds(ee_geom) \
-                        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", 30)) \
                         .select(["B4", "B3", "B2"])
-                    if col.size().getInfo() > 0:
-                        img = col.median().clip(ee_geom)
-                        # Aplicar visualización para RGB natural: escalar uint16 a uint8
-                        # Sentinel-2 SR: valores típicos 0-3000, escalamos a 0-255
+
+                    # Fallback progresivo: primero estricto, luego más permisivo.
+                    selected_col = None
+                    selected_cloud_filter = None
+                    for cloud_limit in [30, 60, None]:
+                        if cloud_limit is None:
+                            candidate = base_col
+                        else:
+                            candidate = base_col.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloud_limit))
+
+                        if candidate.size().getInfo() > 0:
+                            selected_col = candidate
+                            selected_cloud_filter = cloud_limit
+                            break
+
+                    if selected_col is not None:
+                        # Usar la escena menos nublada disponible para evitar composiciones vacías.
+                        img = ee.Image(selected_col.sort("CLOUDY_PIXEL_PERCENTAGE").first()).clip(ee_geom)
                         vis_params = {"min": 0, "max": 3000, "bands": ["B4", "B3", "B2"]}
-                        img_viz = img.visualize(**vis_params)
+                        img_viz = img.visualize(**vis_params).updateMask(img.select("B4").mask())
                         geemap.download_ee_image(image=img_viz, filename=str(png_file), region=ee_geom, scale=10, crs="EPSG:4326", dtype="uint8")
                         if png_file.exists() and png_file.stat().st_size > 1000:
                             Image.open(png_file).verify()
@@ -176,6 +193,11 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
                             png_count_sentinel += 1
                         else:
                             png_file.unlink(missing_ok=True)
+                    else:
+                        log(
+                            f"⚠️ Sin escenas Sentinel para grid_{file_grid_id}_{date_str} en ventana ±{lookback_days} días",
+                            "warning"
+                        )
                 except Exception as e:
                     log(f"⚠️ Error descargando Sentinel PNG grid_{file_grid_id}_{date_str}: {e}", "warning")
             else:
@@ -189,31 +211,32 @@ def generate_maps(aoi_path, grid_path, map_dir, date_before, current_date, anio,
     # Usar las mismas grillas procesadas como alert_grid_ids (basado en coberturas)
     alert_grid_ids = list(grids_to_process) if grids_to_process else None
     
-    for tipo, output_file in [("dw", "dw_mes.html"), ("sentinel", "sentinel_mes.html")]:
-        try:
-            log(f"  Intentando generar {output_file}...", "info")
-            generar_mapa_png(
-                paramo=aoi_name if aoi_name else "paramo",
-                periodo=current_date,
-                tipo=tipo,
-                grilla_path=Path(grid_path),
-                imagenes_dir=Path(map_dir) / "imagenes",
-                output_html=Path(map_dir) / output_file,
-                alert_grid_ids=alert_grid_ids
-            )
-            log(f"  OK: {output_file}", "success")
-        except Exception as e:
-            log(f"  ERROR {output_file}: {str(e)[:200]}", "error")
-            import traceback
-            tb = traceback.format_exc()
-            log(f"  Traceback: {tb[:500]}", "error")
+    output_file = "mapa_combinado_mes.html"
+    try:
+        log(f"  Intentando generar {output_file}...", "info")
+        generar_mapa_png(
+            paramo=aoi_name if aoi_name else "paramo",
+            periodo=current_date,
+            tipo="combinado",
+            grilla_path=Path(grid_path),
+            imagenes_dir=Path(map_dir) / "imagenes",
+            output_html=Path(map_dir) / output_file,
+            alert_grid_ids=alert_grid_ids,
+            image_base_url=image_base_url
+        )
+        log(f"  OK: {output_file}", "success")
+    except Exception as e:
+        log(f"  ERROR {output_file}: {str(e)[:200]}", "error")
+        import traceback
+        tb = traceback.format_exc()
+        log(f"  Traceback: {tb[:500]}", "error")
 
     
     log("="*70 + "\n", "info")
     
     return {
-        "MAPA_SENTINEL_INTERACTIVO": str(Path(map_dir) / "sentinel_mes.html"),
-        "MAPA_DW_INTERACTIVO": str(Path(map_dir) / "dw_mes.html"),
+        "MAPA_COMBINADO_INTERACTIVO": str(Path(map_dir) / "mapa_combinado_mes.html"),
         "IMG_SENTINEL_PNG_DIR": str(sentinel_dir),
-        "IMG_DW_PNG_DIR": str(dw_dir)
+        "IMG_DW_PNG_DIR": str(dw_dir),
+        "ALERT_GRID_COUNT": len(grids_to_process)
     }

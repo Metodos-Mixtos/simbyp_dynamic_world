@@ -108,6 +108,10 @@ def _load_secret_manager(project_id: str) -> Tuple[bool, Dict[str, str], str]:
                 response = client.access_secret_version(request={"name": name})
                 secrets[secret_id] = response.payload.data.decode("UTF-8")
             except Exception as e:
+                # Si falta GCP_PROJECT como secret, usar el proyecto resuelto.
+                if secret_id == "GCP_PROJECT":
+                    secrets["GCP_PROJECT"] = project_id
+                    continue
                 return False, {}, f"Failed to access secret '{secret_id}': {str(e)}"
         
         return True, secrets, ""
@@ -116,7 +120,7 @@ def _load_secret_manager(project_id: str) -> Tuple[bool, Dict[str, str], str]:
         return False, {}, f"Secret Manager error: {str(e)}"
 
 
-def load_secrets(project_id: str = "bosques-bogota-416214") -> Dict[str, str]:
+def load_secrets(project_id: str = None) -> Dict[str, str]:
     """
     Load secrets using a three-tier fallback strategy (same as GFW).
     
@@ -139,6 +143,18 @@ def load_secrets(project_id: str = "bosques-bogota-416214") -> Dict[str, str]:
         ValueError: If secrets cannot be loaded from any source
     """
     print("\n🔐 === Secrets Management (Dynamic World) ===")
+
+    # Resolver proyecto para Secret Manager en forma portable:
+    # 1) argumento explícito
+    # 2) variables de entorno de Cloud Run / GCP
+    # 3) fallback histórico del proyecto
+    resolved_project_id = (
+        project_id
+        or os.getenv("GCP_PROJECT")
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("GCLOUD_PROJECT")
+        or "bosques-bogota-416214"
+    )
     
     # Strategy 1: Environment Variables (FASTEST - Cloud Run mounts secrets here)
     print("\n1️⃣  Trying environment variables...")
@@ -169,9 +185,9 @@ def load_secrets(project_id: str = "bosques-bogota-416214") -> Dict[str, str]:
     
     # Strategy 3: Google Cloud Secret Manager (Fallback)
     print("\n3️⃣  Trying Google Cloud Secret Manager...")
-    print(f"   📍 Project: {project_id}")
+    print(f"   📍 Project: {resolved_project_id}")
     
-    sm_success, sm_secrets, sm_error = _load_secret_manager(project_id)
+    sm_success, sm_secrets, sm_error = _load_secret_manager(resolved_project_id)
     
     if sm_success:
         print(f"   ✅ Loaded all {len(REQUIRED_SECRETS)} secrets from Secret Manager")
