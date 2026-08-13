@@ -1,3 +1,14 @@
+# === CRITICAL: Configure SSL/TLS for paths with special characters ===
+# This MUST be done BEFORE importing google.cloud or requests modules
+try:
+    import certifi
+    import os as _os_temp
+    _os_temp.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+    _os_temp.environ['CURL_CA_BUNDLE'] = certifi.where()
+    del _os_temp
+except Exception as e:
+    print(f"⚠ Warning: Could not configure SSL certificates: {e}")
+
 import os
 from pathlib import Path
 from .secrets_utils import load_secrets

@@ -89,18 +89,26 @@ def compute_transitions(dw_before, dw_current, grid_path):
     results = []
 
     # === Preparar imágenes de cambio ===
-    change_1 = dw_before.eq(1).And(dw_current.neq(1)).rename("change_1")
-    change_5 = dw_before.eq(5).And(dw_current.neq(1)).And(dw_current.neq(5)).rename("change_5")
-    class1_mask = dw_before.eq(1).rename("class1")
-    class5_mask = dw_before.eq(5).rename("class5")
-    valid_mask = dw_before.gte(0).And(dw_current.gte(0)).rename("valid")
+    # Crear máscara de píxeles válidos (ambas imágenes deben tener datos)
+    valid_mask = dw_before.gte(0).And(dw_current.gte(0))
+    
+    # Contar cambios y clases SOLO dentro de píxeles válidos (intersección t1/t2)
+    change_1 = valid_mask.And(dw_before.eq(1)).And(dw_current.neq(1)).toUint8().rename("change_1")
+    change_5 = valid_mask.And(dw_before.eq(5)).And(dw_current.neq(1)).And(dw_current.neq(5)).toUint8().rename("change_5")
+
+    # Máscaras de clases de origen en t1 sobre píxeles válidos
+    class1_mask = valid_mask.And(dw_before.eq(1)).toUint8().rename("class1")
+    class5_mask = valid_mask.And(dw_before.eq(5)).toUint8().rename("class5")
+
+    # Conteo total de píxeles válidos por grilla
+    valid_pixels = valid_mask.toUint8().rename("valid")
 
     img_all = (
         change_1
         .addBands(change_5)
         .addBands(class1_mask)
         .addBands(class5_mask)
-        .addBands(valid_mask)
+        .addBands(valid_pixels)
     )
 
     # === Iterar sobre cada celda de la grilla ===
@@ -112,21 +120,13 @@ def compute_transitions(dw_before, dw_current, grid_path):
             geom = unary_union([p for p in geom.geoms if not p.is_empty])
 
         ee_geom = ee.Geometry(geom.__geo_interface__)
+        
+        # Inicializar valores con ceros (serán actualizados si hay datos)
+        n_valid = n_1_a_otro = n_5_a_otro_no1 = 0
+        pct_1_to_any_of_class1 = pct_5_to_not1_of_class5 = 0
 
         try:
-            # Validar si hay píxeles dentro de la celda
-            count_valid = dw_before.reduceRegion(
-                reducer=ee.Reducer.count(),
-                geometry=ee_geom,
-                scale=10,
-                maxPixels=1e13
-            ).getInfo()
-
-            if not count_valid:
-                log(f"⚠️ Grid {row.get('grid_id', '?')} sin píxeles válidos (fuera del área DW).", "warning")
-                continue
-
-            # Reducir regiones (sumar píxeles)
+            # Un solo reduceRegion por grilla: más eficiente y consistente
             stats = img_all.reduceRegion(
                 reducer=ee.Reducer.sum(),
                 geometry=ee_geom,
@@ -226,6 +226,7 @@ def get_alert_grids(df_transitions, aoi_name, min_threshold=None, top_n=None, co
 def compute_coverage_distribution(dw_before, dw_current, grid_path):
     """
     Calcula la distribución de clases (0-8) de Dynamic World para cada grilla en t1 y t2.
+    SOLO CUENTA PÍXELES VÁLIDOS (donde ambas imágenes tienen datos).
     
     Dynamic World clases:
       0: Water, 1: Trees, 2: Grass, 3: Shrub, 4: Herbaceous, 5: Crops, 6: Built, 7: Bare, 8: Snow
@@ -237,11 +238,17 @@ def compute_coverage_distribution(dw_before, dw_current, grid_path):
     grid_gdf = gpd.read_file(grid_path).to_crs(epsg=4326)
     results = []
     
-    # Crear bandas para cada clase en t1 y t2
+    # Crear máscara de píxeles válidos (ambas imágenes deben tener datos)
+    valid_mask = dw_before.gte(0).And(dw_current.gte(0))
+    
+    # Crear bandas por clase en t1 y t2 sobre píxeles válidos de ambas fechas
     dw_images = {}
     for class_num in range(9):
-        dw_images[f"class_{class_num}_t1"] = dw_before.eq(class_num).rename(f"class_{class_num}_t1")
-        dw_images[f"class_{class_num}_t2"] = dw_current.eq(class_num).rename(f"class_{class_num}_t2")
+        dw_images[f"class_{class_num}_t1"] = valid_mask.And(dw_before.eq(class_num)).toUint8().rename(f"class_{class_num}_t1")
+        dw_images[f"class_{class_num}_t2"] = valid_mask.And(dw_current.eq(class_num)).toUint8().rename(f"class_{class_num}_t2")
+    
+    # Agregar banda de conteo de píxeles válidos (usar toUint8 para conversión correcta en EE)
+    dw_images["valid_count"] = valid_mask.toUint8().rename("valid_count")
     
     # Combinar todas las bandas
     img_all = None
@@ -262,20 +269,11 @@ def compute_coverage_distribution(dw_before, dw_current, grid_path):
         ee_geom = ee.Geometry(geom.__geo_interface__)
         grid_id = row.get("grid_id", _)
         
+        # Inicializar fila con ceros
+        result_row = {"grid_id": grid_id, "n_valid_pixels": 0}
+        
         try:
-            # Contar píxeles válidos
-            count_valid = dw_before.reduceRegion(
-                reducer=ee.Reducer.count(),
-                geometry=ee_geom,
-                scale=10,
-                maxPixels=1e13
-            ).getInfo()
-            
-            if not count_valid:
-                log(f"⚠️ Grid {grid_id} sin píxeles válidos (fue omitida).", "warning")
-                continue
-            
-            # Reducir regiones (sumar píxeles por clase)
+            # Un solo reduceRegion por grilla: clases + denominador válido
             stats = img_all.reduceRegion(
                 reducer=ee.Reducer.sum(),
                 geometry=ee_geom,
@@ -283,26 +281,34 @@ def compute_coverage_distribution(dw_before, dw_current, grid_path):
                 maxPixels=1e13
             ).getInfo() or {}
             
-            # Extraer porcentajes
-            result_row = {"grid_id": grid_id}
-            n_total_t1 = sum(stats.get(f"class_{i}_t1", 0) for i in range(9))
-            n_total_t2 = sum(stats.get(f"class_{i}_t2", 0) for i in range(9))
+            # Denominador común (100%) = píxeles válidos dentro de la grilla
+            n_valid_t1 = stats.get("valid_count", 0)  # Conteo real de píxeles válidos
+            n_valid_t2 = stats.get("valid_count", 0)  # Es el mismo para t1 y t2
+            result_row["n_valid_pixels"] = int(n_valid_t1) if n_valid_t1 else 0
             
-            # Porcentajes por clase en t1
+            if n_valid_t1 == 0:
+                log(f"⚠️ Grid {grid_id} sin píxeles válidos después del filtro (se llenará con ceros).", "warning")
+                for class_num in range(9):
+                    result_row[f"class_{class_num}_t1_pct"] = 0.0
+                    result_row[f"class_{class_num}_t2_pct"] = 0.0
+                results.append(result_row)
+                continue
+            
+            # Porcentajes por clase en t1 (relativo a píxeles válidos)
             for class_num in range(9):
                 n_class_t1 = stats.get(f"class_{class_num}_t1", 0)
-                pct_t1 = 100 * n_class_t1 / n_total_t1 if n_total_t1 > 0 else 0
+                pct_t1 = 100 * n_class_t1 / n_valid_t1 if n_valid_t1 > 0 else 0
                 result_row[f"class_{class_num}_t1_pct"] = round(pct_t1, 2)
             
-            # Porcentajes por clase en t2
+            # Porcentajes por clase en t2 (relativo a píxeles válidos)
             for class_num in range(9):
                 n_class_t2 = stats.get(f"class_{class_num}_t2", 0)
-                pct_t2 = 100 * n_class_t2 / n_total_t2 if n_total_t2 > 0 else 0
+                pct_t2 = 100 * n_class_t2 / n_valid_t2 if n_valid_t2 > 0 else 0
                 result_row[f"class_{class_num}_t2_pct"] = round(pct_t2, 2)
             
         except Exception as e:
             log(f"⚠️ Error en grid {grid_id}: {e}", "warning")
-            result_row = {"grid_id": grid_id}
+            result_row = {"grid_id": grid_id, "n_valid_pixels": 0}
             for class_num in range(9):
                 result_row[f"class_{class_num}_t1_pct"] = 0
                 result_row[f"class_{class_num}_t2_pct"] = 0
@@ -336,13 +342,34 @@ def generate_coverage_csv(dw_before, dw_current, grid_path, date_before, current
     df_coverage = compute_coverage_distribution(dw_before, dw_current, grid_path)
 
     # Calcular suma de todas las categorías en t1 y t2
-    df_coverage["sum_t1"] = df_coverage[[f"class_{i}_t1_pct" for i in range(9)]].sum(axis=1)
-    df_coverage["sum_t2"] = df_coverage[[f"class_{i}_t2_pct" for i in range(9)]].sum(axis=1)
+    df_coverage["sum_t1"] = df_coverage[[f"class_{i}_t1_pct" for i in range(9)]].sum(axis=1).round(2)
+    df_coverage["sum_t2"] = df_coverage[[f"class_{i}_t2_pct" for i in range(9)]].sum(axis=1).round(2)
 
     # Calcular diferencias entre coberturas en t1 y t2 para cada clase
     for class_num in range(9):
         class_name = f"class_{class_num}"
         df_coverage[f"pp_{class_name}"] = df_coverage[f"{class_name}_t2_pct"] - df_coverage[f"{class_name}_t1_pct"]
+
+    # Validación automática: para grillas con píxeles válidos, sum_t1/sum_t2 deben ser ~100
+    tolerance_pp = 0.5
+    has_valid_pixels = df_coverage.get("n_valid_pixels", 0) > 0
+    sum_t1_ok = df_coverage["sum_t1"].between(100 - tolerance_pp, 100 + tolerance_pp)
+    sum_t2_ok = df_coverage["sum_t2"].between(100 - tolerance_pp, 100 + tolerance_pp)
+    invalid_rows = df_coverage[has_valid_pixels & (~sum_t1_ok | ~sum_t2_ok)]
+
+    if not invalid_rows.empty:
+        invalid_grid_ids = invalid_rows["grid_id"].tolist()
+        log(
+            f"⚠️ Validación coberturas: {len(invalid_rows)} grillas con suma fuera de rango "
+            f"[{100 - tolerance_pp}, {100 + tolerance_pp}] -> {invalid_grid_ids}",
+            "warning"
+        )
+    else:
+        log(
+            f"✅ Validación coberturas: todas las grillas con datos tienen sum_t1/sum_t2 dentro de "
+            f"[{100 - tolerance_pp}, {100 + tolerance_pp}]",
+            "success"
+        )
 
     # Guardar
     import os
