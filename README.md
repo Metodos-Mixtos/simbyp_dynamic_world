@@ -4,6 +4,12 @@
 Este módulo permite analizar los cambios interanuales en las coberturas de la tierra en áreas de páramo, utilizando datos de **Dynamic World (Google Earth Engine)** y **Sentinel-2**.  
 Genera estadísticas de cambio por grilla, mapas interactivos (Folium) y un reporte técnico automatizado en formato HTML.
 
+## Diagrama de Arquitectura
+
+![Arquitectura de simbyp_dynamic_world](docs/architecture-preview.png)
+
+Diagrama interactivo (zoom, temas, exportación): [`docs/architecture.html`](docs/architecture.html) — generado con [Archify](https://github.com/tt-a1i/archify).
+
 ## Requisitos del sistema
 - Python 3.11 o superior  
 - Cuenta y autenticación activa en **Google Earth Engine**  

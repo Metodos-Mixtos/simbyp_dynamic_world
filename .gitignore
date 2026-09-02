@@ -32,6 +32,7 @@ credentials
 # Datos y reportes generados
 *.html
 !src/reports/report_template.html
+!docs/architecture.html
 *.pdf
 data/
 output/
